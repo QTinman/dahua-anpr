@@ -120,19 +120,46 @@ function eventRowHtml(ev) {
     <td class="img-cell">${img}</td>`;
 }
 
+function makeLiveRow(ev) {
+  const row = document.createElement("tr");
+  row.dataset.eventId = ev.id;
+  row.dataset.event = JSON.stringify(ev);
+  row.innerHTML = eventRowHtml(ev);
+  // Read the event back from the row on click: the dataset is kept up to
+  // date when the image arrives later, a captured closure would be stale.
+  row.addEventListener("click", () =>
+    showDetail(JSON.parse(row.dataset.event)));
+  return row;
+}
+
 function onLiveEvent(ev) {
   if ($("#live-pause").checked) return;
   const body = $("#live-body");
   body.querySelector(".empty-row")?.remove();
-  const row = document.createElement("tr");
+  const row = makeLiveRow(ev);
   row.className = "flash";
-  row.dataset.eventId = ev.id;
-  row.dataset.event = JSON.stringify(ev);
-  row.innerHTML = eventRowHtml(ev);
-  row.addEventListener("click", () => showDetail(ev));
   body.prepend(row);
   while (body.children.length > MAX_LIVE_ROWS) body.lastChild.remove();
   showDetail(ev);
+}
+
+async function loadRecentEvents() {
+  // Populate the live table with stored events so a page refresh does not
+  // start from an empty screen.
+  let result;
+  try {
+    result = await api(`/api/events?limit=${MAX_LIVE_ROWS}`);
+  } catch (_) {
+    return;
+  }
+  const body = $("#live-body");
+  if (!result.events.length) return;
+  body.innerHTML = "";
+  for (const ev of result.events) { // newest first
+    ev.has_image = !!ev.has_image;
+    body.appendChild(makeLiveRow(ev));
+  }
+  showDetail(result.events[0]);
 }
 
 function onEventImage(eventId) {
@@ -223,12 +250,14 @@ async function runSearch() {
       body.innerHTML = '<tr class="empty-row"><td colspan="11">No results.</td></tr>';
     }
     for (const ev of result.events) {
+      ev.has_image = !!ev.has_image;
       const row = document.createElement("tr");
       row.dataset.eventId = ev.id;
       row.dataset.event = JSON.stringify(ev);
       row.innerHTML = eventRowHtml(ev);
       row.addEventListener("click", () => {
-        if (ev.has_image) openImage(ev.id, ev.plate);
+        const current = JSON.parse(row.dataset.event);
+        if (current.has_image) openImage(current.id, current.plate);
       });
       body.appendChild(row);
     }
@@ -482,6 +511,7 @@ $("#report-run").addEventListener("click", async () => {
 /* ----------------------------------------------------------------- init */
 
 connectWs();
+loadRecentEvents();
 loadCameras().then(() => {
   // Seed status badges from the API snapshot before WS updates arrive.
   api("/api/cameras").then((cameras) => {
