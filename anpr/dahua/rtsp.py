@@ -159,16 +159,15 @@ class RtspMetadataClient:
             # keeps the session alive), then the metadata track.
             if video_url:
                 await self._setup_track(video_url, "0-1")
-                await self._setup_track(track_url, "2-3")
-                self._metadata_channel = 2
+                self._metadata_channel = await self._setup_track(track_url, "2-3")
             else:
-                await self._setup_track(track_url, "0-1")
-                self._metadata_channel = 0
+                self._metadata_channel = await self._setup_track(track_url, "0-1")
             if not self._session:
                 raise RtspError("SETUP returned no session id")
             await self._play()
-            log.info("ONVIF metadata streaming from %s (metadata channel %d)",
-                     self._base, self._metadata_channel)
+            log.info("ONVIF metadata streaming from %s (metadata on interleaved "
+                     "channel %d, video=%s)", self._base, self._metadata_channel,
+                     "yes" if video_url else "no")
             # Signal that the session is established even before the first
             # capture arrives, so the camera shows connected during quiet times.
             yield ""
@@ -248,6 +247,22 @@ class RtspMetadataClient:
 
     async def _close(self) -> None:
         if self._writer is not None:
+            # Best-effort TEARDOWN so the camera frees this session's connection
+            # slot promptly (Dahua caps concurrent connections), instead of
+            # holding it until its own timeout across repeated reconnects.
+            if self._session:
+                try:
+                    self._cseq += 1
+                    lines = [f"TEARDOWN {self.base_url} RTSP/1.0",
+                             f"CSeq: {self._cseq}", f"Session: {self._session}"]
+                    if self._digest.ready and self.username:
+                        lines.append("Authorization: " + self._digest.header(
+                            self.username, self.password, "TEARDOWN", self.base_url))
+                    self._writer.write(("\r\n".join(lines) + "\r\n\r\n").encode())
+                    await asyncio.wait_for(self._writer.drain(), timeout=2.0)
+                except Exception:
+                    pass
+            self._session = ""
             try:
                 self._writer.close()
                 await asyncio.wait_for(self._writer.wait_closed(), timeout=5.0)
@@ -313,13 +328,18 @@ class RtspMetadataClient:
             "DESCRIBE", self.base_url, {"Accept": "application/sdp"})
         return body.decode("utf-8", "replace")
 
-    async def _setup_track(self, track_url: str, interleaved: str) -> None:
+    async def _setup_track(self, track_url: str, interleaved: str) -> int:
+        """SETUP a track and return the RTP interleaved channel the camera
+        actually assigned (which may differ from what we requested)."""
         _, headers, _ = await self._request(
             "SETUP", track_url,
             {"Transport": f"RTP/AVP/TCP;unicast;interleaved={interleaved}"})
         session = headers.get("session", "")
         if session and not self._session:
             self._session = session.split(";")[0].strip()
+        transport = headers.get("transport", "")
+        m = re.search(r"interleaved=(\d+)", transport)
+        return int(m.group(1)) if m else int(interleaved.split("-")[0])
 
     async def _play(self) -> None:
         await self._request("PLAY", self.base_url, {"Range": "npt=0.000-"})
