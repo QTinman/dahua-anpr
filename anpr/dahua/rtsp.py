@@ -93,13 +93,17 @@ class RtspMetadataClient:
         self._cseq = 0
         self._digest = _Digest()
         self._session = ""
+        self._base = ""
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
 
+    def _url(self, subtype: int) -> str:
+        return (f"rtsp://{self.host}:{self.port}/cam/realmonitor"
+                f"?channel={self.channel}&subtype={subtype}")
+
     @property
     def base_url(self) -> str:
-        return (f"rtsp://{self.host}:{self.port}/cam/realmonitor"
-                f"?channel={self.channel}&subtype={self.subtype}")
+        return self._base or self._url(self.subtype)
 
     async def stream_metadata(self) -> AsyncIterator[str]:
         """Connect and yield complete ONVIF metadata XML documents."""
@@ -109,8 +113,22 @@ class RtspMetadataClient:
         except (OSError, asyncio.TimeoutError) as exc:
             raise RtspError(f"RTSP connect failed: {exc}") from exc
         try:
-            sdp = await self._describe()
-            track_url, _pt = self._find_metadata_track(sdp)
+            # The metadata track may live on the main or sub stream depending
+            # on the camera's Smart Plan / RTSP config; try both.
+            track_url = None
+            subtypes = [self.subtype] + [s for s in (0, 1) if s != self.subtype]
+            for subtype in subtypes:
+                self._base = self._url(subtype)
+                try:
+                    sdp = await self._describe()
+                    track_url, _pt = self._find_metadata_track(sdp)
+                    break
+                except RtspError:
+                    track_url = None
+            if track_url is None:
+                raise RtspError(
+                    "no ONVIF metadata track on the RTSP stream - enable "
+                    "metadata (Smart Plan / RTSP) on the camera")
             await self._setup(track_url)
             await self._play()
             keepalive = asyncio.create_task(self._keepalive_loop())
