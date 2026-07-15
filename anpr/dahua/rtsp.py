@@ -16,8 +16,11 @@ Pure standard library (asyncio + hashlib); no third-party RTSP dependency.
 
 import asyncio
 import hashlib
+import logging
 import re
 from typing import AsyncIterator, Dict, List, Optional, Tuple
+
+log = logging.getLogger("anpr.rtsp")
 
 RTSP_PORT = 554
 KEEPALIVE_SECONDS = 25
@@ -94,6 +97,7 @@ class RtspMetadataClient:
         self._digest = _Digest()
         self._session = ""
         self._base = ""
+        self._metadata_channel = 0
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
 
@@ -105,12 +109,13 @@ class RtspMetadataClient:
     def _candidate_urls(self) -> List[str]:
         # Dahua only includes the ONVIF metadata track when the stream is
         # requested the ONVIF way (proto=Onvif); the plain URL carries only
-        # video/audio. Try the ONVIF variants first.
+        # video/audio. Prefer the sub stream (subtype=1) - it carries the same
+        # metadata but with lower-bandwidth video, which we pull only to keep
+        # the session alive.
         urls = [
-            self._url(self.subtype, "Onvif"),
-            self._url(0, "Onvif"),
             self._url(1, "Onvif"),
-            self._url(self.subtype),
+            self._url(0, "Onvif"),
+            self._url(self.subtype, "Onvif"),
         ]
         seen, ordered = set(), []
         for u in urls:
@@ -134,11 +139,13 @@ class RtspMetadataClient:
             # The ONVIF metadata track is only present on the proto=Onvif
             # stream variants; try the candidates until one advertises it.
             track_url = None
+            video_url = None
             for url in self._candidate_urls():
                 self._base = url
                 try:
                     sdp = await self._describe()
                     track_url, _pt = self._find_metadata_track(sdp)
+                    video_url = self._find_video_track(sdp)
                     break
                 except RtspError:
                     track_url = None
@@ -146,14 +153,27 @@ class RtspMetadataClient:
                 raise RtspError(
                     "no ONVIF metadata track on the RTSP stream - enable "
                     "metadata (Smart Plan / RTSP) on the camera")
-            await self._setup(track_url)
+
+            # Many Dahua firmwares only push metadata when the video track is
+            # also pulled in the same session; set up video first (its RTP
+            # keeps the session alive), then the metadata track.
+            if video_url:
+                await self._setup_track(video_url, "0-1")
+                await self._setup_track(track_url, "2-3")
+                self._metadata_channel = 2
+            else:
+                await self._setup_track(track_url, "0-1")
+                self._metadata_channel = 0
+            if not self._session:
+                raise RtspError("SETUP returned no session id")
             await self._play()
-            keepalive = asyncio.create_task(self._keepalive_loop())
-            try:
-                async for xml in self._read_metadata():
-                    yield xml
-            finally:
-                keepalive.cancel()
+            log.info("ONVIF metadata streaming from %s (metadata channel %d)",
+                     self._base, self._metadata_channel)
+            # Signal that the session is established even before the first
+            # capture arrives, so the camera shows connected during quiet times.
+            yield ""
+            async for xml in self._read_metadata():
+                yield xml
         finally:
             await self._close()
 
@@ -202,6 +222,8 @@ class RtspMetadataClient:
 
         async def collect() -> None:
             async for xml in self.stream_metadata():
+                if not xml.strip():
+                    continue  # the connected-signal, not a document
                 samples.append(_redact_images(xml))
                 # Stop once we have a real capture frame (plate + picture).
                 if "PlateNumber>" in xml and "/9j/" in xml:
@@ -284,60 +306,53 @@ class RtspMetadataClient:
             "DESCRIBE", self.base_url, {"Accept": "application/sdp"})
         return body.decode("utf-8", "replace")
 
-    async def _setup(self, track_url: str) -> None:
+    async def _setup_track(self, track_url: str, interleaved: str) -> None:
         _, headers, _ = await self._request(
             "SETUP", track_url,
-            {"Transport": "RTP/AVP/TCP;unicast;interleaved=0-1"})
+            {"Transport": f"RTP/AVP/TCP;unicast;interleaved={interleaved}"})
         session = headers.get("session", "")
-        self._session = session.split(";")[0].strip()
-        if not self._session:
-            raise RtspError("SETUP returned no session id")
+        if session and not self._session:
+            self._session = session.split(";")[0].strip()
 
     async def _play(self) -> None:
         await self._request("PLAY", self.base_url, {"Range": "npt=0.000-"})
 
-    async def _keepalive_loop(self) -> None:
-        while True:
-            await asyncio.sleep(KEEPALIVE_SECONDS)
-            try:
-                self._cseq += 1
-                lines = [f"GET_PARAMETER {self.base_url} RTSP/1.0",
-                         f"CSeq: {self._cseq}", f"Session: {self._session}"]
-                if self._digest.ready and self.username:
-                    lines.append("Authorization: " + self._digest.header(
-                        self.username, self.password, "GET_PARAMETER",
-                        self.base_url))
-                self._writer.write(("\r\n".join(lines) + "\r\n\r\n").encode())
-                await self._writer.drain()
-            except Exception:
-                return
-
     # ------------------------------------------------------------------ SDP
+
+    @staticmethod
+    def _media_blocks(sdp: str) -> List[Tuple[str, str]]:
+        blocks: List[Tuple[str, str]] = []
+        media_type = ""
+        lines: List[str] = []
+        for line in sdp.splitlines():
+            if line.startswith("m="):
+                if media_type:
+                    blocks.append((media_type, "\n".join(lines)))
+                media_type = line[2:].split()[0]
+                lines = [line]
+            else:
+                lines.append(line)
+        if media_type:
+            blocks.append((media_type, "\n".join(lines)))
+        return blocks
 
     def _find_metadata_track(self, sdp: str) -> Tuple[str, int]:
         """Locate the ONVIF metadata (application) media track in the SDP."""
-        media_blocks: List[Tuple[str, str]] = []  # (media_type, block_text)
-        current_type = ""
-        current_lines: List[str] = []
-        for line in sdp.splitlines():
-            if line.startswith("m="):
-                if current_type:
-                    media_blocks.append((current_type, "\n".join(current_lines)))
-                current_type = line.split()[0][2:] if False else line[2:].split()[0]
-                current_lines = [line]
-            else:
-                current_lines.append(line)
-        if current_type:
-            media_blocks.append((current_type, "\n".join(current_lines)))
-
-        for media_type, block in media_blocks:
-            if media_type != "application":
-                continue
-            control = _sdp_control(block)
-            pt = _sdp_payload_type(block)
-            return self._absolute_control(control), pt
+        for media_type, block in self._media_blocks(sdp):
+            if media_type == "application":
+                return self._absolute_control(_sdp_control(block)), \
+                    _sdp_payload_type(block)
         raise RtspError("no ONVIF metadata (application) track in SDP - "
                         "enable metadata/RTSP or check the stream URL")
+
+    def _find_video_track(self, sdp: str) -> Optional[str]:
+        """Locate the video media track (pulled to keep the session alive)."""
+        for media_type, block in self._media_blocks(sdp):
+            if media_type == "video":
+                control = _sdp_control(block)
+                if control:
+                    return self._absolute_control(control)
+        return None
 
     def _absolute_control(self, control: str) -> str:
         if not control or control == "*":
@@ -369,7 +384,7 @@ class RtspMetadataClient:
                 raise RtspError(f"bad interleaved frame length {length}")
             packet = await self._reader.readexactly(length)
             channel = header[0]
-            if channel != 0:  # RTCP or the wrong track
+            if channel != self._metadata_channel:  # video / RTCP - discard
                 continue
             payload, end_of_unit = _rtp_payload(packet)
             if payload:

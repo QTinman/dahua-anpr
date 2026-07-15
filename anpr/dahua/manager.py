@@ -121,6 +121,8 @@ class CameraWorker:
                     if self.status != "connected":
                         retry = RETRY_MIN_SECONDS
                         await self._set_status("connected")
+                    if not xml.strip():
+                        continue  # connected-signal, no document yet
                     now = asyncio.get_event_loop().time()
                     for obj in parse_onvif_metadata(xml):
                         await self._maybe_emit_onvif(obj, seen, now,
@@ -129,6 +131,7 @@ class CameraWorker:
             except asyncio.CancelledError:
                 raise
             except RtspError as exc:
+                log.info("Camera %s ONVIF stream dropped: %s", cam.name, exc)
                 await self._set_status("error", str(exc))
             except Exception as exc:  # defensive: never let a worker die
                 log.exception("Camera %s ONVIF worker error", cam.name)
