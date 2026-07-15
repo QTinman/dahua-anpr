@@ -186,6 +186,7 @@ function showDetail(ev) {
   const fields = {
     Time: fmtTime(ev.received_at),
     Camera: ev.camera_name,
+    "Event": ev.event_code,
     Country: ev.country,
     "Plate color": ev.plate_color,
     Vehicle: ev.vehicle_type,
