@@ -89,7 +89,8 @@ async def delete_camera(request: Request, camera_id: int):
         raise HTTPException(404, "Camera not found")
 
 
-@router.post("/api/cameras/{camera_id}/diagnose-stream")
+@router.api_route("/api/cameras/{camera_id}/diagnose-stream",
+                  methods=["GET", "POST"])
 async def diagnose_stream(request: Request, camera_id: int):
     """Report how the camera delivers events and plate pictures.
 
