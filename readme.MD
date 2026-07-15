@@ -42,6 +42,21 @@ pip install -r requirements.txt
 python -m anpr
 ```
 
+**Recommended:** launch with the bundled script so the database always lives
+next to it and never scatters across folders on restart:
+
+```bash
+./run.sh          # Linux / macOS
+run.bat           # Windows (double-click or run from a terminal)
+```
+
+The startup log prints the database file in use, e.g.
+`Using database /path/anpr.db (1 camera(s), 42 event(s))`; you can also open
+`http://localhost:8080/api/diagnostics`. If the Cameras tab is empty but you
+configured a camera before, the server is reading a different `anpr.db` than
+last time — use the launch script (or set `ANPR_DB` to a fixed absolute
+path) so it is always the same file.
+
 Open http://localhost:8080, go to the **Cameras** tab and add your camera
 (IP, port 80, username, password). The status badge turns green once the
 event stream is attached; plates appear on the **Live** tab as vehicles pass.
