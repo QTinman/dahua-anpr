@@ -55,6 +55,21 @@ def _as_float(value: str) -> Optional[float]:
         return None
 
 
+def _as_int(value: str) -> Optional[int]:
+    try:
+        return int(value) if value not in ("", None) else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _prop(props: Dict[str, str], *names: str) -> str:
+    for name in names:
+        value = props.get(name)
+        if value:
+            return value
+    return ""
+
+
 def parse_onvif_metadata(xml_text: str) -> List[Dict[str, Any]]:
     """Parse an ONVIF metadata document into a list of object dicts.
 
@@ -78,6 +93,15 @@ def parse_onvif_metadata(xml_text: str) -> List[Dict[str, Any]]:
             appearance = obj.find(f"{TT}Appearance")
             if appearance is None:
                 continue
+            # Vendor attributes (direction, lane, etc.) are commonly carried as
+            # <Property name="X">value</Property> under <tt:Extension>. Collect
+            # them namespace-agnostically.
+            props: Dict[str, str] = {}
+            for el in obj.iter():
+                if el.tag.rsplit("}", 1)[-1] == "Property":
+                    name = el.get("name") or el.get("Name")
+                    if name:
+                        props[name] = (el.text or "").strip()
             vinfo = appearance.find(f"{TT}VehicleInfo")
             lpinfo = appearance.find(f"{TT}LicensePlateInfo")
 
@@ -91,6 +115,14 @@ def parse_onvif_metadata(xml_text: str) -> List[Dict[str, Any]]:
                 continue
 
             class_el = appearance.find(f"{TT}Class")
+            behaviour = obj.find(f"{TT}Behaviour")
+            # Direction / lane may be a vendor Property, a Behaviour child, or a
+            # dedicated element - try the known spellings.
+            direction = (_prop(props, "Direction", "MovingDirection",
+                               "CaptureDirection", "DrivingDirection")
+                         or _text(behaviour, f"{TT}Direction"))
+            lane = (_prop(props, "Lane", "LaneNo", "LaneNumber")
+                    or _text(vinfo, f"{TT}Lane"))
             results.append({
                 "utc": utc,
                 "object_id": obj.get("ObjectId", ""),
@@ -104,6 +136,9 @@ def parse_onvif_metadata(xml_text: str) -> List[Dict[str, Any]]:
                 "vehicle_brand": _text(vinfo, f"{TT}Brand"),
                 "vehicle_color": _text(vinfo, f"{TT}Color"),
                 "vehicle_size": _text(vinfo, f"{TT}Size"),
+                "direction": direction,
+                "lane": lane,
+                "properties": props,
                 "speed": _as_float(_text(vinfo, f"{TT}Speed")),
                 # Use the full scene/vehicle image as the capture picture (it
                 # shows the vehicle with its plate, matching the camera UI);
@@ -128,7 +163,7 @@ def normalize_onvif_object(obj: Dict[str, Any]) -> Dict[str, Any]:
         "vehicle_brand": obj.get("vehicle_brand", ""),
         "vehicle_size": obj.get("vehicle_size", ""),
         "speed": obj.get("speed"),
-        "direction": "",
-        "lane": None,
+        "direction": obj.get("direction", ""),
+        "lane": _as_int(obj.get("lane", "")),
         "event_time": obj.get("utc", ""),
     }

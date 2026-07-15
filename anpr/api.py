@@ -136,6 +136,26 @@ async def diagnose_rtsp(request: Request, camera_id: int):
     return {"ok": True, "report": report}
 
 
+@router.api_route("/api/cameras/{camera_id}/sample-onvif",
+                  methods=["GET", "POST"])
+async def sample_onvif(request: Request, camera_id: int):
+    """Return a few raw ONVIF metadata documents (images redacted)."""
+    state = _state(request)
+    camera = state.db.get_camera(camera_id)
+    if camera is None:
+        raise HTTPException(404, "Camera not found")
+    from .dahua.rtsp import RtspError, RtspMetadataClient
+
+    client = RtspMetadataClient(camera.host, camera.rtsp_port, camera.username,
+                                camera.password, camera.channel)
+    try:
+        return {"ok": True, **await client.sample_metadata()}
+    except RtspError as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
 @router.post("/api/cameras/{camera_id}/sync")
 async def sync_history(request: Request, camera_id: int):
     """Import the camera's stored ANPR history into the local database."""

@@ -12,7 +12,12 @@ PLATE_XML = (
     '<tt:LicensePlateInfo><tt:PlateNumber>DKL70</tt:PlateNumber>'
     '<tt:CountryCode>DEU</tt:CountryCode><tt:Color>White</tt:Color>'
     '<tt:Image>/9j/PLATE</tt:Image></tt:LicensePlateInfo>'
-    '</tt:Appearance></tt:Object></tt:Frame></tt:VideoAnalytics>'
+    '</tt:Appearance>'
+    '<tt:Behaviour><tt:Speed>42</tt:Speed></tt:Behaviour>'
+    '<tt:Extension><Properties>'
+    '<Property name="Direction">Approaching</Property>'
+    '<Property name="Lane">2</Property></Properties></tt:Extension>'
+    '</tt:Object></tt:Frame></tt:VideoAnalytics>'
     '</tt:MetadataStream>'
 )
 
@@ -40,6 +45,16 @@ def test_parse_onvif_plate_and_images():
     assert o["image_b64"] == "/9j/VEHICLE"
     assert o["vehicle_image_b64"] == "/9j/VEHICLE"
     assert o["plate_image_b64"] == "/9j/PLATE"
+    # direction/lane from the extension properties
+    assert o["direction"] == "Approaching"
+    assert o["lane"] == "2"
+
+
+def test_normalize_onvif_direction_lane():
+    o = parse_onvif_metadata(PLATE_XML)[0]
+    fields = normalize_onvif_object(o)
+    assert fields["direction"] == "Approaching"
+    assert fields["lane"] == 2
 
 
 def test_parse_onvif_skips_empty_frames():

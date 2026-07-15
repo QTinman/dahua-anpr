@@ -195,6 +195,28 @@ class RtspMetadataClient:
             results[f"stream{i}"] = entry
         return results
 
+    async def sample_metadata(self, max_seconds: float = 25.0) -> Dict[str, object]:
+        """Collect a few metadata XML documents (images redacted) for
+        inspection - used to see the exact fields a camera publishes."""
+        samples: List[str] = []
+
+        async def collect() -> None:
+            async for xml in self.stream_metadata():
+                samples.append(_redact_images(xml))
+                # Stop once we have a real capture frame (plate + picture).
+                if "PlateNumber>" in xml and "/9j/" in xml:
+                    return
+                if len(samples) >= 10:
+                    return
+
+        try:
+            await asyncio.wait_for(collect(), timeout=max_seconds)
+        except asyncio.TimeoutError:
+            pass
+        except RtspError as exc:
+            return {"error": str(exc), "samples": samples}
+        return {"count": len(samples), "samples": samples[-6:]}
+
     async def _close(self) -> None:
         if self._writer is not None:
             try:
@@ -373,6 +395,16 @@ class RtspMetadataClient:
         length = headers.get("content-length")
         if length and length.isdigit():
             await self._reader.readexactly(int(length))
+
+
+def _redact_images(xml: str) -> str:
+    """Replace base64 image content with a length marker so the sample is
+    readable (a single image is ~600 KB of base64)."""
+    return re.sub(
+        r"(<tt:Image>)[^<]*(</tt:Image>)",
+        lambda m: f"{m.group(1)}[image {len(m.group(0))} b64 chars]{m.group(2)}",
+        xml,
+    )
 
 
 def _sdp_media_summary(sdp: str) -> List[Dict[str, str]]:
