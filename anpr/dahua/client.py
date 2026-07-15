@@ -160,22 +160,27 @@ class DahuaClient:
     ) -> Dict[str, object]:
         """Attach briefly to the event and ITC snapshot streams and report what
         actually arrives. Used to work out how a given camera delivers plate
-        pictures (inline base64, separate jpeg part, or not at all).
+        pictures (inline base64, separate jpeg part, or a separate stream).
         """
         codes = codes.strip() or DEFAULT_EVENT_CODES
         report: Dict[str, object] = {}
-        endpoints = {
-            "eventManager": (
-                f"{self.base_url}/cgi-bin/eventManager.cgi?action=attach"
-                f"&codes=[{codes}]&heartbeat={HEARTBEAT_SECONDS}"
-            ),
-            "snapManager": (
-                f"{self.base_url}/cgi-bin/snapManager.cgi?action=attachFileProc"
-                f"&Flags[0]=Event&Events=[{codes}]"
-            ),
-        }
-        for name, url in endpoints.items():
-            report[name] = await self._diagnose_one(url, seconds)
+        report["eventManager"] = await self._diagnose_one(
+            f"{self.base_url}/cgi-bin/eventManager.cgi?action=attach"
+            f"&codes=[{codes}]&heartbeat={HEARTBEAT_SECONDS}",
+            seconds,
+        )
+        # The ITC picture stream: try the known snapManager variants and report
+        # the exact HTTP status / error of each so we can see which one works.
+        snap_variants = [
+            f"/cgi-bin/snapManager.cgi?action=attachFileProc&Flags[0]=Event&Events=[{codes}]",
+            f"/cgi-bin/snapManager.cgi?action=attachFileProc&Flags[0]=Event&Events=[All]&channel=1",
+            "/cgi-bin/snapManager.cgi?action=attachFileProc&channel=1&Types[0]=all",
+        ]
+        report["snapManager"] = []
+        for path in snap_variants:
+            result = await self._diagnose_one(self.base_url + path, min(seconds, 7.0))
+            result["query"] = path.split("?", 1)[1]
+            report["snapManager"].append(result)
         return report
 
     async def _diagnose_one(self, url: str, seconds: float) -> Dict[str, object]:
@@ -184,36 +189,39 @@ class DahuaClient:
         image_sizes = []
         sample_event = ""
         embedded_image = False
-        status = "ok"
+        http_status = None
+        error = ""
         try:
             async with self._client(read_timeout=seconds + 5) as client:
                 async with client.stream("GET", url) as resp:
-                    if resp.status_code != 200:
-                        return {"status": f"HTTP {resp.status_code}"}
-                    boundary = _boundary_from_content_type(
-                        resp.headers.get("content-type", "")
-                    )
-                    parser = MultipartEventParser(boundary)
-                    loop = asyncio.get_event_loop()
-                    deadline = loop.time() + seconds
-                    async for chunk in resp.aiter_bytes():
-                        for part in parser.feed(chunk):
-                            if part.kind == "event" and part.event:
-                                events += 1
-                                if not sample_event:
-                                    from .parser import extract_image_b64
-                                    data = part.event.get("data") or {}
-                                    embedded_image = extract_image_b64(data) is not None
-                                    sample_event = _truncate_event(part.event)
-                            elif part.kind == "image" and part.image:
-                                images += 1
-                                image_sizes.append(len(part.image))
-                        if loop.time() > deadline:
-                            break
+                    http_status = resp.status_code
+                    if resp.status_code == 200:
+                        boundary = _boundary_from_content_type(
+                            resp.headers.get("content-type", "")
+                        )
+                        parser = MultipartEventParser(boundary)
+                        loop = asyncio.get_event_loop()
+                        deadline = loop.time() + seconds
+                        async for chunk in resp.aiter_bytes():
+                            for part in parser.feed(chunk):
+                                if part.kind == "event" and part.event:
+                                    events += 1
+                                    if not sample_event:
+                                        from .parser import extract_image_b64
+                                        data = part.event.get("data") or {}
+                                        embedded_image = \
+                                            extract_image_b64(data) is not None
+                                        sample_event = _truncate_event(part.event)
+                                elif part.kind == "image" and part.image:
+                                    images += 1
+                                    image_sizes.append(len(part.image))
+                            if loop.time() > deadline:
+                                break
         except httpx.HTTPError as exc:
-            status = f"error: {exc}"
+            error = f"{type(exc).__name__}: {exc}"
         return {
-            "status": status,
+            "http_status": http_status,
+            "error": error,
             "events": events,
             "image_parts": images,
             "image_sizes": image_sizes[:5],
@@ -253,21 +261,22 @@ class DahuaClient:
         raise DahuaError("Event stream closed by camera")
 
 
-def _truncate_event(event: dict, limit: int = 1500) -> str:
+def _truncate_event(event: dict, limit: int = 8000) -> str:
     """Render an event dict compactly for the diagnostic report.
 
     A base64 image field would swamp the output, so long string values are
-    shortened to their head plus a length marker.
+    shortened to their head plus a length marker (which also makes an inline
+    image obvious, e.g. ``…(+48213 chars)``).
     """
     import copy
 
     def shorten(obj):
         if isinstance(obj, str):
-            return obj if len(obj) <= 120 else f"{obj[:80]}…(+{len(obj) - 80} chars)"
+            return obj if len(obj) <= 160 else f"{obj[:100]}…(+{len(obj) - 100} chars)"
         if isinstance(obj, dict):
             return {k: shorten(v) for k, v in obj.items()}
         if isinstance(obj, list):
-            return [shorten(v) for v in obj[:20]]
+            return [shorten(v) for v in obj[:30]]
         return obj
 
     import json
