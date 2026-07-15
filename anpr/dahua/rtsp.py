@@ -172,8 +172,15 @@ class RtspMetadataClient:
             # Signal that the session is established even before the first
             # capture arrives, so the camera shows connected during quiet times.
             yield ""
-            async for xml in self._read_metadata():
-                yield xml
+            # A periodic RTSP keepalive resets the camera's session timeout;
+            # RTP data flow alone does not, so without it the camera drops the
+            # session after ~60-90s.
+            keepalive = asyncio.create_task(self._keepalive_loop())
+            try:
+                async for xml in self._read_metadata():
+                    yield xml
+            finally:
+                keepalive.cancel()
         finally:
             await self._close()
 
@@ -317,6 +324,25 @@ class RtspMetadataClient:
     async def _play(self) -> None:
         await self._request("PLAY", self.base_url, {"Range": "npt=0.000-"})
 
+    async def _keepalive_loop(self) -> None:
+        """Send a periodic GET_PARAMETER to keep the RTSP session from timing
+        out. The reply arrives interleaved with RTP and is consumed by the
+        read loop's RTSP-response handling."""
+        while True:
+            await asyncio.sleep(KEEPALIVE_SECONDS)
+            try:
+                self._cseq += 1
+                lines = [f"GET_PARAMETER {self.base_url} RTSP/1.0",
+                         f"CSeq: {self._cseq}", f"Session: {self._session}"]
+                if self._digest.ready and self.username:
+                    lines.append("Authorization: " + self._digest.header(
+                        self.username, self.password, "GET_PARAMETER",
+                        self.base_url))
+                self._writer.write(("\r\n".join(lines) + "\r\n\r\n").encode())
+                await self._writer.drain()
+            except Exception:
+                return
+
     # ------------------------------------------------------------------ SDP
 
     @staticmethod
@@ -372,28 +398,32 @@ class RtspMetadataClient:
     async def _read_metadata(self) -> AsyncIterator[str]:
         """Read interleaved RTP and yield reassembled ONVIF XML documents."""
         fragments: List[bytes] = []
-        while True:
-            marker = await self._reader.readexactly(1)
-            if marker != b"$":
-                # An RTSP response (e.g. keepalive reply) slipped in; skip it.
-                await self._skip_rtsp_response(marker)
-                continue
-            header = await self._reader.readexactly(3)
-            length = int.from_bytes(header[1:3], "big")
-            if length == 0 or length > MAX_INTERLEAVED:
-                raise RtspError(f"bad interleaved frame length {length}")
-            packet = await self._reader.readexactly(length)
-            channel = header[0]
-            if channel != self._metadata_channel:  # video / RTCP - discard
-                continue
-            payload, end_of_unit = _rtp_payload(packet)
-            if payload:
-                fragments.append(payload)
-            if end_of_unit and fragments:
-                xml = b"".join(fragments).decode("utf-8", "replace")
-                fragments = []
-                if "<" in xml:
-                    yield xml
+        try:
+            while True:
+                marker = await self._reader.readexactly(1)
+                if marker != b"$":
+                    # An RTSP response (e.g. keepalive reply) slipped in; skip.
+                    await self._skip_rtsp_response(marker)
+                    continue
+                header = await self._reader.readexactly(3)
+                length = int.from_bytes(header[1:3], "big")
+                if length == 0 or length > MAX_INTERLEAVED:
+                    raise RtspError(f"bad interleaved frame length {length}")
+                packet = await self._reader.readexactly(length)
+                channel = header[0]
+                if channel != self._metadata_channel:  # video / RTCP - discard
+                    continue
+                payload, end_of_unit = _rtp_payload(packet)
+                if payload:
+                    fragments.append(payload)
+                if end_of_unit and fragments:
+                    xml = b"".join(fragments).decode("utf-8", "replace")
+                    fragments = []
+                    if "<" in xml:
+                        yield xml
+        except (asyncio.IncompleteReadError, ConnectionError, OSError) as exc:
+            # Normal disconnect (camera closed the session) - reconnect cleanly.
+            raise RtspError("metadata stream closed by camera") from exc
 
     async def _skip_rtsp_response(self, first_byte: bytes) -> None:
         # Consume the rest of the status line and headers of an interleaved
