@@ -35,6 +35,10 @@ every capture in SQLite and pushes it live to the browser over a WebSocket.
   gaps from before the monitor was connected. Duplicates are skipped.
 - **Search & filtering** — by plate (partial match), camera and date range,
   with pagination and CSV export.
+- **Calendar playback** — a month calendar marks the days that have captures;
+  pick a day to review its captures in a viewer, stepping through them with
+  Prev/Next or auto-advancing with Play (adjustable speed), with a filmstrip
+  of thumbnails.
 - **Scheduled reports** — daily CSV report at a configurable time/directory,
   plus on-demand generation.
 - **Camera management UI** — add/edit/delete cameras (IP, port, credentials,
@@ -148,6 +152,8 @@ tests/                 # pytest suite (parser + API)
 | POST   | `/api/cameras/{id}/diagnose-stream` | Report how the camera delivers events/pictures |
 | GET    | `/api/diagnostics` | Which database file is in use, plus row counts |
 | GET    | `/api/events` | Search events (`plate`, `camera_id`, `date_from`, `date_to`, `limit`, `offset`) |
+| GET    | `/api/events/day` | All of a day's events, oldest first (`date=YYYY-MM-DD`) |
+| GET    | `/api/events/calendar` | Per-day capture counts for a month (`month=YYYY-MM`) |
 | GET    | `/api/events/{id}/image` | Plate image (jpeg/png) |
 | GET    | `/api/events/export.csv` | CSV export with the same filters |
 | GET/PUT| `/api/settings/report` | Daily report configuration |

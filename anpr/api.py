@@ -3,7 +3,7 @@
 import base64
 import csv
 import io
-from datetime import date
+from datetime import date as _date
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -211,6 +211,29 @@ async def search_events(
     )
 
 
+@router.get("/api/events/day")
+async def events_day(request: Request, date: str):
+    """All of a day's events, oldest first, for calendar playback."""
+    try:
+        target = _date.fromisoformat(date)
+    except ValueError:
+        raise HTTPException(400, "date must be YYYY-MM-DD")
+    events = _state(request).db.events_for_day(target.isoformat())
+    return {"date": target.isoformat(), "total": len(events), "events": events}
+
+
+@router.get("/api/events/calendar")
+async def events_calendar(request: Request, month: str):
+    """Per-day event counts for a YYYY-MM month, to annotate the calendar."""
+    if len(month) != 7 or month[4] != "-":
+        raise HTTPException(400, "month must be YYYY-MM")
+    try:
+        _date.fromisoformat(month + "-01")
+    except ValueError:
+        raise HTTPException(400, "month must be YYYY-MM")
+    return {"month": month, "counts": _state(request).db.event_day_counts(month)}
+
+
 @router.get("/api/events/{event_id}/image")
 async def event_image(request: Request, event_id: int):
     state = _state(request)
@@ -252,7 +275,7 @@ async def export_csv(
             writer.writerow(row)
             yield buffer.getvalue()
 
-    filename = f"anpr-export-{date.today().isoformat()}.csv"
+    filename = f"anpr-export-{_date.today().isoformat()}.csv"
     return StreamingResponse(
         generate(), media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
@@ -278,7 +301,7 @@ async def run_report_now(request: Request, day: str = ""):
     state = _state(request)
     settings = state.reports.get_settings()
     try:
-        target = date.fromisoformat(day) if day else date.today()
+        target = _date.fromisoformat(day) if day else _date.today()
     except ValueError:
         raise HTTPException(400, "day must be YYYY-MM-DD")
     try:

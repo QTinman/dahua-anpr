@@ -264,6 +264,29 @@ class Database:
             rows = self._conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
+    def events_for_day(self, day: str, limit: int = 3000) -> List[Dict[str, Any]]:
+        """All events on a given YYYY-MM-DD, oldest first (for playback)."""
+        sql = (
+            "SELECT id, camera_id, camera_name, event_code, plate, plate_color, "
+            "plate_type, country, vehicle_type, vehicle_color, vehicle_brand, "
+            "vehicle_size, speed, direction, lane, event_time, received_at, "
+            "(image_b64 IS NOT NULL) AS has_image FROM events "
+            "WHERE received_at LIKE ? ORDER BY received_at ASC, id ASC LIMIT ?"
+        )
+        with self._lock:
+            rows = self._conn.execute(sql, (day + "%", limit)).fetchall()
+        return [dict(r) for r in rows]
+
+    def event_day_counts(self, month: str) -> Dict[str, int]:
+        """Number of events per day within a YYYY-MM month."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT substr(received_at, 1, 10) AS day, COUNT(*) AS n "
+                "FROM events WHERE received_at LIKE ? GROUP BY day",
+                (month + "%",),
+            ).fetchall()
+        return {r["day"]: r["n"] for r in rows}
+
     def get_event_image(self, event_id: int) -> Optional[str]:
         with self._lock:
             row = self._conn.execute(

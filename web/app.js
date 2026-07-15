@@ -47,6 +47,7 @@ document.querySelectorAll(".tab").forEach((btn) => {
     if (btn.dataset.tab === "cameras") loadCameras();
     if (btn.dataset.tab === "reports") loadReportSettings();
     if (btn.dataset.tab === "search") populateCameraFilter();
+    if (btn.dataset.tab === "playback") initPlayback();
   });
 });
 
@@ -556,6 +557,199 @@ $("#report-run").addEventListener("click", async () => {
     msg.className = "msg-err";
   }
 });
+
+/* -------------------------------------------------------------- playback */
+
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July",
+  "August", "September", "October", "November", "December"];
+let pbMonth = null;          // Date pointing at the shown month (day 1)
+let pbCounts = {};           // "YYYY-MM-DD" -> count for the shown month
+let pbDay = null;            // selected "YYYY-MM-DD"
+let pbEvents = [];           // events of the selected day (ascending)
+let pbIndex = 0;
+let pbTimer = null;
+let pbInited = false;
+
+function ymd(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-`
+    + String(d.getDate()).padStart(2, "0");
+}
+
+function initPlayback() {
+  if (pbInited) return;
+  pbInited = true;
+  const now = new Date();
+  pbMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  $("#cal-prev").addEventListener("click", () => shiftMonth(-1));
+  $("#cal-next").addEventListener("click", () => shiftMonth(1));
+  $("#pb-prev").addEventListener("click", () => { pbStop(); pbGo(pbIndex - 1); });
+  $("#pb-next").addEventListener("click", () => { pbStop(); pbGo(pbIndex + 1); });
+  $("#pb-play").addEventListener("click", pbTogglePlay);
+  renderCalendar();
+  // Auto-select today if it has data, else the latest day with data.
+  loadCalendar().then(() => {
+    const today = ymd(new Date());
+    if (pbCounts[today]) selectDay(today);
+    else {
+      const days = Object.keys(pbCounts).sort();
+      if (days.length) selectDay(days[days.length - 1]);
+    }
+  });
+}
+
+function shiftMonth(delta) {
+  pbMonth = new Date(pbMonth.getFullYear(), pbMonth.getMonth() + delta, 1);
+  renderCalendar();
+  loadCalendar();
+}
+
+async function loadCalendar() {
+  const month = `${pbMonth.getFullYear()}-${String(pbMonth.getMonth() + 1).padStart(2, "0")}`;
+  try {
+    const r = await api(`/api/events/calendar?month=${month}`);
+    pbCounts = r.counts || {};
+  } catch (_) { pbCounts = {}; }
+  renderCalendar();
+}
+
+function renderCalendar() {
+  $("#cal-title").textContent = `${MONTHS[pbMonth.getMonth()]} ${pbMonth.getFullYear()}`;
+  const grid = $("#calendar-grid");
+  grid.innerHTML = "";
+  const year = pbMonth.getFullYear(), month = pbMonth.getMonth();
+  const first = new Date(year, month, 1);
+  // Monday-based offset.
+  let lead = (first.getDay() + 6) % 7;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const todayStr = ymd(new Date());
+  // Leading days from previous month.
+  for (let i = 0; i < lead; i++) {
+    const cell = document.createElement("div");
+    cell.className = "cal-day other";
+    grid.appendChild(cell);
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const count = pbCounts[dateStr] || 0;
+    const cell = document.createElement("div");
+    cell.className = "cal-day" + (count ? " has-data" : "")
+      + (dateStr === pbDay ? " selected" : "") + (dateStr === todayStr ? " today" : "");
+    cell.innerHTML = `<span>${d}</span>` + (count
+      ? `<span class="cal-count">${count}</span>` : "");
+    if (count) cell.addEventListener("click", () => selectDay(dateStr));
+    grid.appendChild(cell);
+  }
+}
+
+async function selectDay(dateStr) {
+  pbStop();
+  pbDay = dateStr;
+  renderCalendar();
+  const strip = $("#pb-filmstrip");
+  strip.innerHTML = '<span class="muted" style="padding:10px">Loading…</span>';
+  try {
+    const r = await api(`/api/events/day?date=${dateStr}`);
+    pbEvents = r.events || [];
+  } catch (err) {
+    strip.innerHTML = `<span class="msg-err" style="padding:10px">${esc(err.message)}</span>`;
+    return;
+  }
+  renderFilmstrip();
+  const has = pbEvents.length > 0;
+  $("#pb-prev").disabled = !has;
+  $("#pb-next").disabled = !has;
+  $("#pb-play").disabled = !has;
+  if (has) pbGo(0);
+  else {
+    $("#pb-image").className = "plate-image empty";
+    $("#pb-image").textContent = "no captures this day";
+    $("#pb-plate").textContent = "—";
+    $("#pb-fields").innerHTML = "";
+    $("#pb-pos").textContent = "0 / 0";
+  }
+}
+
+function renderFilmstrip() {
+  const strip = $("#pb-filmstrip");
+  strip.innerHTML = "";
+  if (!pbEvents.length) {
+    strip.innerHTML = '<span class="muted" style="padding:10px">No captures this day.</span>';
+    return;
+  }
+  pbEvents.forEach((ev, i) => {
+    const item = document.createElement("div");
+    item.className = "film-item" + (i === pbIndex ? " active" : "");
+    item.dataset.i = i;
+    const thumb = ev.has_image
+      ? `<img loading="lazy" src="/api/events/${ev.id}/image" alt="">`
+      : `<div class="film-noimg">no image</div>`;
+    const t = fmtTime(ev.received_at).split(", ")[1] || "";
+    item.innerHTML = thumb
+      + `<div class="film-plate">${esc(ev.plate || "?")}</div>`
+      + `<div class="film-cap">${esc(t)}</div>`;
+    item.addEventListener("click", () => { pbStop(); pbGo(i); });
+    strip.appendChild(item);
+  });
+}
+
+function pbGo(index) {
+  if (!pbEvents.length) return;
+  pbIndex = Math.max(0, Math.min(index, pbEvents.length - 1));
+  const ev = pbEvents[pbIndex];
+  $("#pb-plate").textContent = ev.plate || "?";
+  const box = $("#pb-image");
+  if (ev.has_image) {
+    box.className = "plate-image";
+    box.innerHTML = `<img src="/api/events/${ev.id}/image" alt="capture">`;
+  } else {
+    box.className = "plate-image empty";
+    box.textContent = "no image";
+  }
+  const fields = {
+    Time: fmtTime(ev.received_at), Camera: ev.camera_name, Event: ev.event_code,
+    Country: ev.country, "Plate color": ev.plate_color, Vehicle: ev.vehicle_type,
+    Color: ev.vehicle_color, Brand: ev.vehicle_brand, Size: ev.vehicle_size,
+    Speed: ev.speed != null ? ev.speed + " km/h" : "", Direction: ev.direction,
+    Lane: ev.lane,
+  };
+  const dl = $("#pb-fields");
+  dl.innerHTML = "";
+  for (const [k, v] of Object.entries(fields)) {
+    if (v === "" || v == null) continue;
+    dl.insertAdjacentHTML("beforeend", `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`);
+  }
+  $("#pb-pos").textContent = `${pbIndex + 1} / ${pbEvents.length}`;
+  $("#pb-prev").disabled = pbIndex === 0 && !pbTimer;
+  $("#pb-next").disabled = pbIndex === pbEvents.length - 1 && !pbTimer;
+  // highlight + scroll filmstrip
+  document.querySelectorAll(".film-item").forEach((el) =>
+    el.classList.toggle("active", Number(el.dataset.i) === pbIndex));
+  const active = $(`.film-item[data-i="${pbIndex}"]`);
+  if (active) active.scrollIntoView({ inline: "center", block: "nearest" });
+}
+
+function pbTogglePlay() {
+  if (pbTimer) { pbStop(); return; }
+  if (!pbEvents.length) return;
+  if (pbIndex >= pbEvents.length - 1) pbIndex = -1; // restart from beginning
+  $("#pb-play").textContent = "❚❚ Pause";
+  const step = () => {
+    if (pbIndex >= pbEvents.length - 1) { pbStop(); return; }
+    pbGo(pbIndex + 1);
+  };
+  const speed = parseInt($("#pb-speed").value, 10) || 1200;
+  step();
+  pbTimer = setInterval(step, speed);
+}
+
+function pbStop() {
+  if (pbTimer) { clearInterval(pbTimer); pbTimer = null; }
+  $("#pb-play").textContent = "▶ Play";
+  if (pbEvents.length) {
+    $("#pb-prev").disabled = pbIndex === 0;
+    $("#pb-next").disabled = pbIndex === pbEvents.length - 1;
+  }
+}
 
 /* ----------------------------------------------------------------- init */
 
