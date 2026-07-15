@@ -97,9 +97,27 @@ class RtspMetadataClient:
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
 
-    def _url(self, subtype: int) -> str:
-        return (f"rtsp://{self.host}:{self.port}/cam/realmonitor"
-                f"?channel={self.channel}&subtype={subtype}")
+    def _url(self, subtype: int, proto: str = "") -> str:
+        url = (f"rtsp://{self.host}:{self.port}/cam/realmonitor"
+               f"?channel={self.channel}&subtype={subtype}")
+        return url + (f"&proto={proto}" if proto else "")
+
+    def _candidate_urls(self) -> List[str]:
+        # Dahua only includes the ONVIF metadata track when the stream is
+        # requested the ONVIF way (proto=Onvif); the plain URL carries only
+        # video/audio. Try the ONVIF variants first.
+        urls = [
+            self._url(self.subtype, "Onvif"),
+            self._url(0, "Onvif"),
+            self._url(1, "Onvif"),
+            self._url(self.subtype),
+        ]
+        seen, ordered = set(), []
+        for u in urls:
+            if u not in seen:
+                seen.add(u)
+                ordered.append(u)
+        return ordered
 
     @property
     def base_url(self) -> str:
@@ -113,12 +131,11 @@ class RtspMetadataClient:
         except (OSError, asyncio.TimeoutError) as exc:
             raise RtspError(f"RTSP connect failed: {exc}") from exc
         try:
-            # The metadata track may live on the main or sub stream depending
-            # on the camera's Smart Plan / RTSP config; try both.
+            # The ONVIF metadata track is only present on the proto=Onvif
+            # stream variants; try the candidates until one advertises it.
             track_url = None
-            subtypes = [self.subtype] + [s for s in (0, 1) if s != self.subtype]
-            for subtype in subtypes:
-                self._base = self._url(subtype)
+            for url in self._candidate_urls():
+                self._base = url
                 try:
                     sdp = await self._describe()
                     track_url, _pt = self._find_metadata_track(sdp)
@@ -152,17 +169,23 @@ class RtspMetadataClient:
         except (OSError, asyncio.TimeoutError) as exc:
             raise RtspError(f"RTSP connect failed: {exc}") from exc
         results: Dict[str, object] = {}
+        candidates = self._candidate_urls() + [self._url(1)]
+        seen = set()
         try:
-            for subtype in (0, 1):
-                self._base = self._url(subtype)
-                entry: Dict[str, object] = {"url": self._base}
+            for i, url in enumerate(candidates):
+                if url in seen:
+                    continue
+                seen.add(url)
+                self._base = url
+                entry: Dict[str, object] = {"url": url}
                 try:
                     sdp = await self._describe()
                     entry["media"] = _sdp_media_summary(sdp)
-                    entry["sdp"] = sdp[:4000]
+                    entry["has_metadata"] = any(
+                        m["media"] == "application" for m in entry["media"])
                 except RtspError as exc:
                     entry["error"] = str(exc)
-                results[f"subtype{subtype}"] = entry
+                results[f"stream{i}"] = entry
         finally:
             await self._close()
         return results
