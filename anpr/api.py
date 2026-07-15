@@ -3,7 +3,7 @@
 import base64
 import csv
 import io
-from datetime import date as _date
+from datetime import date as _date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -11,11 +11,14 @@ from fastapi.responses import Response, StreamingResponse
 
 from .dahua.client import DahuaError, probe
 from .models import (
+    AccessSettings,
+    AccessSettingsPublic,
     CameraCreate,
     CameraPublic,
     CameraUpdate,
     ReportSettings,
     TestConnectionRequest,
+    WhitelistCreate,
 )
 from .reports import write_report
 
@@ -280,6 +283,71 @@ async def export_csv(
         generate(), media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ---------------------------------------------------------------- whitelist
+
+@router.get("/api/whitelist")
+async def list_whitelist(request: Request):
+    return _state(request).db.list_whitelist()
+
+
+@router.post("/api/whitelist", status_code=201)
+async def add_whitelist(request: Request, body: WhitelistCreate):
+    if not body.plate.strip():
+        raise HTTPException(400, "plate is required")
+    return _state(request).db.add_whitelist(
+        body.plate, body.label, datetime.now().isoformat(timespec="seconds"))
+
+
+@router.delete("/api/whitelist/{entry_id}", status_code=204)
+async def delete_whitelist(request: Request, entry_id: int):
+    if not _state(request).db.delete_whitelist(entry_id):
+        raise HTTPException(404, "Whitelist entry not found")
+
+
+# ----------------------------------------------------------- access control
+
+@router.get("/api/settings/access")
+async def get_access_settings(request: Request):
+    return AccessSettingsPublic.from_settings(_state(request).access.get_settings())
+
+
+@router.put("/api/settings/access")
+async def set_access_settings(request: Request, body: AccessSettings):
+    access = _state(request).access
+    # An empty SMTP password means "keep the stored one".
+    if not body.smtp_password:
+        body.smtp_password = access.get_settings().smtp_password
+    access.save_settings(body)
+    return AccessSettingsPublic.from_settings(body)
+
+
+@router.post("/api/access/test-gate")
+async def test_gate(request: Request, camera_id: int):
+    state = _state(request)
+    camera = state.db.get_camera(camera_id)
+    if camera is None:
+        raise HTTPException(404, "Camera not found")
+    try:
+        await state.access.test_gate(camera, state.access.get_settings())
+    except DahuaError as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    return {"ok": True}
+
+
+@router.post("/api/access/test-email")
+async def test_email(request: Request, body: AccessSettings):
+    access = _state(request).access
+    if not body.smtp_password:
+        body.smtp_password = access.get_settings().smtp_password
+    try:
+        await access.send_test_email(body)
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    return {"ok": True}
 
 
 # ------------------------------------------------------------------ reports

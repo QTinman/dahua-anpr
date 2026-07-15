@@ -39,6 +39,10 @@ every capture in SQLite and pushes it live to the browser over a WebSocket.
   pick a day to review its captures in a viewer, stepping through them with
   Prev/Next or auto-advancing with Play (adjustable speed), with a filmstrip
   of thumbnails.
+- **Whitelist & access control** (opt-in) — maintain a plate whitelist in the
+  UI; open a gate by firing the capturing camera's alarm output when a
+  whitelisted plate is seen, and/or email an alert when a plate is *not*
+  whitelisted. Gate CGI paths are configurable, with Test buttons for both.
 - **Scheduled reports** — daily CSV report at a configurable time/directory,
   plus on-demand generation.
 - **Camera management UI** — add/edit/delete cameras (IP, port, credentials,
@@ -156,6 +160,10 @@ tests/                 # pytest suite (parser + API)
 | GET    | `/api/events/calendar` | Per-day capture counts for a month (`month=YYYY-MM`) |
 | GET    | `/api/events/{id}/image` | Plate image (jpeg/png) |
 | GET    | `/api/events/export.csv` | CSV export with the same filters |
+| GET/POST/DELETE | `/api/whitelist` | Manage whitelisted plates |
+| GET/PUT| `/api/settings/access` | Whitelist gate/email configuration |
+| POST   | `/api/access/test-gate` | Fire a camera's gate output now (`camera_id`) |
+| POST   | `/api/access/test-email` | Send a test alert email |
 | GET/PUT| `/api/settings/report` | Daily report configuration |
 | POST   | `/api/reports/run` | Generate a report now |
 | WS     | `/ws` | Live events + camera status push |

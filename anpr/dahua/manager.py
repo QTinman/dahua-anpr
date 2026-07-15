@@ -72,10 +72,12 @@ def _now_iso() -> str:
 
 
 class CameraWorker:
-    def __init__(self, camera: Camera, db: Database, hub: WebSocketHub):
+    def __init__(self, camera: Camera, db: Database, hub: WebSocketHub,
+                 access=None):
         self.camera = camera
         self.db = db
         self.hub = hub
+        self.access = access
         self.status = "connecting"
         self.status_detail = ""
         self._task: Optional[asyncio.Task] = None
@@ -201,6 +203,14 @@ class CameraWorker:
         payload["has_image"] = anpr.image_b64 is not None
         payload.pop("image_b64", None)
         await self.hub.broadcast({"type": "anpr_event", "event": payload})
+        await self._apply_access(anpr)
+
+    async def _apply_access(self, anpr: AnprEvent) -> None:
+        if self.access is not None:
+            try:
+                await self.access.on_event(anpr, self.camera)
+            except Exception:
+                log.exception("Access control failed for %s", self.camera.name)
 
     async def _run_events(self, client: DahuaClient) -> None:
         cam = self.camera
@@ -301,6 +311,7 @@ class CameraWorker:
         payload["has_image"] = has_image
         payload.pop("image_b64", None)
         await self.hub.broadcast({"type": "anpr_event", "event": payload})
+        await self._apply_access(anpr)
 
         # Only pull a live snapshot when the event carried no picture at all.
         if not has_image and self.camera.snapshot_on_event:
@@ -341,9 +352,10 @@ class CameraWorker:
 
 
 class CameraManager:
-    def __init__(self, db: Database, hub: WebSocketHub):
+    def __init__(self, db: Database, hub: WebSocketHub, access=None):
         self.db = db
         self.hub = hub
+        self.access = access
         self._workers: Dict[int, CameraWorker] = {}
 
     async def start_all(self) -> None:
@@ -352,7 +364,7 @@ class CameraManager:
                 self.start_camera(camera)
 
     def start_camera(self, camera: Camera) -> None:
-        worker = CameraWorker(camera, self.db, self.hub)
+        worker = CameraWorker(camera, self.db, self.hub, self.access)
         self._workers[camera.id] = worker
         worker.start()
 

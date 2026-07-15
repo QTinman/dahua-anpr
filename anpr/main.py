@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .access import AccessController
 from .api import router
 from .database import Database
 from .dahua.manager import CameraManager
@@ -42,13 +43,15 @@ async def lifespan(app: FastAPI):
         db.path, counts["cameras"], counts["events"],
     )
     hub = WebSocketHub()
-    manager = CameraManager(db, hub)
+    access = AccessController(db)
+    manager = CameraManager(db, hub, access)
     reports = ReportScheduler(db)
 
     app.state.db = db
     app.state.hub = hub
     app.state.manager = manager
     app.state.reports = reports
+    app.state.access = access
     app.state.simulator = None
 
     await manager.start_all()

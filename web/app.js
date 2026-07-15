@@ -48,6 +48,8 @@ document.querySelectorAll(".tab").forEach((btn) => {
     if (btn.dataset.tab === "reports") loadReportSettings();
     if (btn.dataset.tab === "search") populateCameraFilter();
     if (btn.dataset.tab === "playback") initPlayback();
+    if (btn.dataset.tab === "whitelist") loadWhitelist();
+    if (btn.dataset.tab === "reports") loadAccessSettings();
   });
 });
 
@@ -763,6 +765,149 @@ function pbStop() {
     $("#pb-next").disabled = pbIndex === pbEvents.length - 1;
   }
 }
+
+/* ------------------------------------------------------------- whitelist */
+
+async function loadWhitelist() {
+  const body = $("#wl-body");
+  let entries;
+  try { entries = await api("/api/whitelist"); }
+  catch (err) {
+    body.innerHTML = `<tr class="empty-row"><td colspan="4">Error: ${esc(err.message)}</td></tr>`;
+    return;
+  }
+  body.innerHTML = "";
+  if (!entries.length) {
+    body.innerHTML = '<tr class="empty-row"><td colspan="4">No plates yet.</td></tr>';
+    return;
+  }
+  for (const e of entries) {
+    const row = document.createElement("tr");
+    row.innerHTML = `<td><span class="plate-chip">${esc(e.plate)}</span></td>`
+      + `<td>${esc(e.label || "")}</td>`
+      + `<td class="muted">${esc(fmtTime(e.created_at))}</td>`
+      + `<td><button class="btn small danger" data-del="${e.id}">Remove</button></td>`;
+    row.querySelector("[data-del]").addEventListener("click", async () => {
+      await api(`/api/whitelist/${e.id}`, { method: "DELETE" });
+      loadWhitelist();
+    });
+    body.appendChild(row);
+  }
+}
+
+$("#wl-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#wl-msg");
+  try {
+    await api("/api/whitelist", {
+      method: "POST",
+      body: JSON.stringify({
+        plate: $("#wl-plate").value.trim(),
+        label: $("#wl-label").value.trim(),
+      }),
+    });
+    $("#wl-plate").value = "";
+    $("#wl-label").value = "";
+    msg.textContent = "";
+    loadWhitelist();
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = "msg-err";
+  }
+});
+
+/* -------------------------------------------------------- access control */
+
+function accessFormToBody() {
+  return {
+    enabled: $("#acc-enabled").checked,
+    gate_enabled: $("#acc-gate-enabled").checked,
+    gate_open_path: $("#acc-gate-open").value.trim(),
+    gate_close_path: $("#acc-gate-close").value.trim(),
+    gate_pulse_seconds: parseFloat($("#acc-gate-pulse").value) || 0,
+    email_enabled: $("#acc-email-enabled").checked,
+    smtp_host: $("#acc-smtp-host").value.trim(),
+    smtp_port: parseInt($("#acc-smtp-port").value, 10) || 587,
+    smtp_user: $("#acc-smtp-user").value.trim(),
+    smtp_password: $("#acc-smtp-pass").value,
+    smtp_tls: $("#acc-smtp-tls").checked,
+    email_from: $("#acc-email-from").value.trim(),
+    email_to: $("#acc-email-to").value.trim(),
+    email_attach_image: $("#acc-email-image").checked,
+    debounce_seconds: parseInt($("#acc-debounce").value, 10) || 0,
+  };
+}
+
+async function loadAccessSettings() {
+  // Populate the gate-camera dropdown from configured cameras.
+  try {
+    const cameras = await api("/api/cameras");
+    const sel = $("#acc-gate-camera");
+    sel.innerHTML = "";
+    for (const cam of cameras) {
+      const opt = document.createElement("option");
+      opt.value = cam.id; opt.textContent = cam.name;
+      sel.appendChild(opt);
+    }
+  } catch (_) {}
+  try {
+    const s = await api("/api/settings/access");
+    $("#acc-enabled").checked = s.enabled;
+    $("#acc-gate-enabled").checked = s.gate_enabled;
+    $("#acc-gate-open").value = s.gate_open_path;
+    $("#acc-gate-close").value = s.gate_close_path;
+    $("#acc-gate-pulse").value = s.gate_pulse_seconds;
+    $("#acc-email-enabled").checked = s.email_enabled;
+    $("#acc-smtp-host").value = s.smtp_host;
+    $("#acc-smtp-port").value = s.smtp_port;
+    $("#acc-smtp-user").value = s.smtp_user;
+    $("#acc-smtp-pass").value = "";
+    $("#acc-smtp-pass").placeholder = s.smtp_password_set ? "(unchanged)" : "";
+    $("#acc-smtp-tls").checked = s.smtp_tls;
+    $("#acc-email-from").value = s.email_from;
+    $("#acc-email-to").value = s.email_to;
+    $("#acc-email-image").checked = s.email_attach_image;
+    $("#acc-debounce").value = s.debounce_seconds;
+    if (s.gate_camera_id) $("#acc-gate-camera").value = s.gate_camera_id;
+  } catch (_) {}
+}
+
+$("#access-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#acc-msg");
+  try {
+    await api("/api/settings/access", {
+      method: "PUT", body: JSON.stringify(accessFormToBody()),
+    });
+    msg.textContent = "Saved."; msg.className = "msg-ok";
+  } catch (err) { msg.textContent = err.message; msg.className = "msg-err"; }
+});
+
+$("#acc-gate-test").addEventListener("click", async () => {
+  const msg = $("#acc-gate-msg");
+  const camId = $("#acc-gate-camera").value;
+  if (!camId) { msg.textContent = "Add a camera first."; msg.className = "msg-err"; return; }
+  msg.textContent = "Firing…"; msg.className = "muted";
+  // Save first so the test uses the current paths.
+  try {
+    await api("/api/settings/access", { method: "PUT", body: JSON.stringify(accessFormToBody()) });
+    const r = await api(`/api/access/test-gate?camera_id=${camId}`, { method: "POST" });
+    if (r.ok) { msg.textContent = "✓ Gate output fired."; msg.className = "msg-ok"; }
+    else { msg.textContent = "✗ " + r.error; msg.className = "msg-err"; }
+  } catch (err) { msg.textContent = "✗ " + err.message; msg.className = "msg-err"; }
+});
+
+$("#acc-email-test").addEventListener("click", async () => {
+  const msg = $("#acc-email-msg");
+  msg.textContent = "Sending…"; msg.className = "muted";
+  try {
+    const r = await api("/api/access/test-email", {
+      method: "POST", body: JSON.stringify(accessFormToBody()),
+    });
+    if (r.ok) { msg.textContent = "✓ Test email sent."; msg.className = "msg-ok"; }
+    else { msg.textContent = "✗ " + r.error; msg.className = "msg-err"; }
+  } catch (err) { msg.textContent = "✗ " + err.message; msg.className = "msg-err"; }
+});
 
 /* ----------------------------------------------------------------- init */
 

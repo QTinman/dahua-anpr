@@ -297,6 +297,11 @@ dd { margin: 0; }
 }
 .panel h2 { margin: 0 0 6px; font-size: 16px; }
 
+.acc-master { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.acc-group { border: 1px solid var(--border); border-radius: 8px; padding: 4px 14px 12px; margin: 12px 0; }
+.acc-group legend { padding: 0 6px; font-size: 13px; }
+.acc-group legend label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 14px 0; }
 .form-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 .form-grid label:has(input[type="checkbox"]) { flex-direction: row; align-items: center; }

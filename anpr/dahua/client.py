@@ -95,6 +95,22 @@ class DahuaClient:
                         break
         return info
 
+    async def trigger(self, path: str) -> None:
+        """Authenticated GET to an arbitrary camera CGI path (e.g. to pulse an
+        alarm output for a gate). Raises DahuaError on failure."""
+        if not path.startswith("/"):
+            path = "/" + path
+        url = self.base_url + path
+        try:
+            async with self._client(read_timeout=10.0) as client:
+                resp = await client.get(url)
+        except httpx.HTTPError as exc:
+            raise DahuaError(f"Gate request failed: {exc}") from exc
+        if resp.status_code == 401:
+            raise DahuaError("Authentication failed (check username/password)")
+        if resp.status_code != 200:
+            raise DahuaError(f"Gate request returned HTTP {resp.status_code}")
+
     async def snapshot(self, channel: int = 1) -> Optional[bytes]:
         url = f"{self.base_url}/cgi-bin/snapshot.cgi?channel={channel}"
         try:

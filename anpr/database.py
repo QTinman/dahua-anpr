@@ -59,7 +59,21 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS whitelist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plate TEXT NOT NULL,
+    plate_norm TEXT NOT NULL UNIQUE,
+    label TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_whitelist_norm ON whitelist(plate_norm);
 """
+
+
+def normalize_plate(plate: str) -> str:
+    """Normalise a plate for comparison: upper-case, alphanumeric only."""
+    return "".join(ch for ch in (plate or "").upper() if ch.isalnum())
 
 
 class Database:
@@ -316,6 +330,50 @@ class Database:
         return where, params
 
     # ------------------------------------------------------------ settings
+
+    # ----------------------------------------------------------- whitelist
+
+    def list_whitelist(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, plate, label, created_at FROM whitelist "
+                "ORDER BY plate"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def add_whitelist(self, plate: str, label: str, created_at: str) -> Dict[str, Any]:
+        norm = normalize_plate(plate)
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO whitelist (plate, plate_norm, label, created_at) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(plate_norm) DO UPDATE SET plate=excluded.plate, "
+                "label=excluded.label",
+                (plate.strip(), norm, label.strip(), created_at),
+            )
+            row = self._conn.execute(
+                "SELECT id, plate, label, created_at FROM whitelist "
+                "WHERE plate_norm = ?", (norm,)
+            ).fetchone()
+            self._conn.commit()
+        return dict(row)
+
+    def delete_whitelist(self, entry_id: int) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM whitelist WHERE id = ?", (entry_id,))
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def whitelist_contains(self, plate: str) -> bool:
+        norm = normalize_plate(plate)
+        if not norm:
+            return False
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM whitelist WHERE plate_norm = ? LIMIT 1", (norm,)
+            ).fetchone()
+        return row is not None
 
     def get_setting(self, key: str, default: Any = None) -> Any:
         with self._lock:

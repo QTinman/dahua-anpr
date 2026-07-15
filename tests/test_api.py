@@ -120,6 +120,48 @@ def test_sync_history_unreachable(client):
     assert client.post("/api/cameras/99999/sync").status_code == 404
 
 
+def test_whitelist_crud_and_matching(client):
+    from anpr.database import normalize_plate
+
+    resp = client.post("/api/whitelist", json={"plate": "AB-12 34", "label": "Boss"})
+    assert resp.status_code == 201
+    entry = resp.json()
+    assert entry["label"] == "Boss"
+
+    # Duplicate (normalised) plate updates rather than duplicating.
+    client.post("/api/whitelist", json={"plate": "ab1234", "label": "same car"})
+    listed = client.get("/api/whitelist").json()
+    assert len(listed) == 1
+
+    db = client.app.state.db
+    assert db.whitelist_contains("AB1234") is True
+    assert db.whitelist_contains("a b 1 2 3 4") is True   # normalisation
+    assert db.whitelist_contains("ZZ9999") is False
+    assert normalize_plate("ab-12 34") == "AB1234"
+
+    resp = client.delete(f"/api/whitelist/{entry['id']}")
+    assert resp.status_code == 204
+    assert client.get("/api/whitelist").json() == []
+
+
+def test_access_settings_roundtrip_keeps_password(client):
+    resp = client.put("/api/settings/access", json={
+        "enabled": True, "email_enabled": True, "smtp_host": "smtp.example.com",
+        "smtp_user": "u", "smtp_password": "secret", "email_to": "a@b.com",
+    })
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["smtp_password"] == ""          # never returned
+    assert body["smtp_password_set"] is True
+
+    # Saving again without a password keeps the stored one.
+    client.put("/api/settings/access", json={
+        "enabled": True, "email_enabled": True, "smtp_host": "smtp.example.com",
+        "smtp_user": "u", "smtp_password": "", "email_to": "a@b.com",
+    })
+    assert client.app.state.access.get_settings().smtp_password == "secret"
+
+
 def test_diagnostics(client):
     resp = client.get("/api/diagnostics")
     data = resp.json()

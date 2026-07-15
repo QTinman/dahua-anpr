@@ -123,3 +123,55 @@ class ReportSettings(BaseModel):
     enabled: bool = False
     time: str = Field(default="23:59", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     directory: str = "reports"
+
+
+class WhitelistCreate(BaseModel):
+    plate: str = Field(min_length=1, max_length=32)
+    label: str = Field(default="", max_length=100)
+
+
+class WhitelistEntry(BaseModel):
+    id: int
+    plate: str
+    label: str = ""
+    created_at: str = ""
+
+
+class AccessSettings(BaseModel):
+    """Whitelist-driven gate control and email alerting (all opt-in)."""
+
+    enabled: bool = False
+
+    # Fire the capturing camera's alarm output when a whitelisted plate is seen.
+    gate_enabled: bool = False
+    # CGI paths on the camera. Defaults pulse alarm output 1 (AlarmOut[0]).
+    gate_open_path: str = "/cgi-bin/configManager.cgi?action=setConfig&AlarmOut[0].Mode=1"
+    gate_close_path: str = "/cgi-bin/configManager.cgi?action=setConfig&AlarmOut[0].Mode=0"
+    gate_pulse_seconds: float = Field(default=2.0, ge=0, le=60)
+
+    # Email when a plate is NOT in the whitelist.
+    email_enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_tls: bool = True
+    email_from: str = ""
+    email_to: str = ""            # comma-separated recipients
+    email_attach_image: bool = True
+
+    # Ignore repeat sightings of the same plate within this many seconds.
+    debounce_seconds: int = Field(default=15, ge=0, le=3600)
+
+
+class AccessSettingsPublic(AccessSettings):
+    """Same as AccessSettings but the SMTP password is never sent to clients."""
+
+    smtp_password_set: bool = False
+
+    @classmethod
+    def from_settings(cls, s: AccessSettings) -> "AccessSettingsPublic":
+        data = s.model_dump()
+        data["smtp_password_set"] = bool(data.get("smtp_password"))
+        data["smtp_password"] = ""
+        return cls(**data)
