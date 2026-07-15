@@ -106,8 +106,12 @@ class CameraWorker:
             return
         data = event.get("data") or {}
         fields = normalize_traffic_event(code, data)
-        if not fields["plate"] and not data:
-            return  # nothing useful in this part
+        # Keep every traffic/ANPR capture (including plate-less ones such as
+        # "Unlicensed") and anything that carries a plate. This lets a camera
+        # subscribed to "All" also record manual-snapshot captures while still
+        # dropping non-ANPR noise (VideoMotion, etc.) that has no plate.
+        if not fields["plate"] and not code.startswith("Traffic"):
+            return
 
         anpr = AnprEvent(
             camera_id=self.camera.id,
