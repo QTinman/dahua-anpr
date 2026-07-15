@@ -29,15 +29,42 @@ RETRY_MIN_SECONDS = 5
 RETRY_MAX_SECONDS = 60
 # How long after a text event a jpeg part is still considered "its" image.
 IMAGE_MATCH_WINDOW = 3.0
-# Ignore repeat ONVIF frames of the same tracked object within this window.
-ONVIF_DEDUP_SECONDS = 8.0
+# An ONVIF-tracked vehicle spans several metadata frames (plate in one, image
+# and attributes in another). Merge frames per object and emit once the object
+# has been gone this long, or as soon as its capture image arrives.
+ONVIF_FLUSH_SECONDS = 2.5
+# Fields merged across an object's frames (first non-empty value wins).
+ONVIF_MERGE_FIELDS = (
+    "plate", "plate_type", "country", "plate_color", "vehicle_type",
+    "vehicle_brand", "vehicle_color", "vehicle_size", "direction", "lane",
+    "speed", "utc", "image_b64",
+)
 
 
-def _prune_seen(seen: Dict[str, float], now: float) -> None:
-    """Drop de-dup keys older than the window to bound memory."""
-    stale = [k for k, t in seen.items() if now - t > ONVIF_DEDUP_SECONDS * 2]
-    for key in stale:
-        seen.pop(key, None)
+def _merge_onvif(dest: dict, obj: dict) -> None:
+    """Copy an object's non-empty fields into the accumulated record."""
+    for key in ONVIF_MERGE_FIELDS:
+        value = obj.get(key)
+        if value in (None, ""):
+            continue
+        if dest.get(key) in (None, ""):
+            dest[key] = value
+
+
+def _flush_onvif(pending: Dict[str, dict], now: float) -> list:
+    """Emit records for vehicles that have left (no frame for a while) but
+    never got a snapshot image, and drop old entries to bound memory."""
+    out = []
+    for oid in list(pending):
+        entry = pending[oid]
+        if now - entry["last"] <= ONVIF_FLUSH_SECONDS:
+            continue
+        if not entry["emitted"] and entry["data"].get("plate"):
+            entry["emitted"] = True
+            out.append(entry["data"])
+        if now - entry["last"] > ONVIF_FLUSH_SECONDS + 15:
+            pending.pop(oid, None)
+    return out
 
 
 def _now_iso() -> str:
@@ -111,9 +138,8 @@ class CameraWorker:
         rtsp = RtspMetadataClient(cam.host, cam.rtsp_port, cam.username,
                                   cam.password, cam.channel)
         retry = RETRY_MIN_SECONDS
-        # object_id -> loop time, to avoid emitting the same capture repeatedly
-        # as the camera keeps sending the tracked object's frames.
-        seen: Dict[str, float] = {}
+        # object_id -> {"data": merged fields, "last": t, "emitted": bool}
+        pending: Dict[str, dict] = {}
         while True:
             await self._set_status("connecting")
             try:
@@ -125,9 +151,10 @@ class CameraWorker:
                         continue  # connected-signal, no document yet
                     now = asyncio.get_event_loop().time()
                     for obj in parse_onvif_metadata(xml):
-                        await self._maybe_emit_onvif(obj, seen, now,
-                                                     normalize_onvif_object)
-                    _prune_seen(seen, now)
+                        for rec in self._accumulate_onvif(obj, pending, now):
+                            await self._store_onvif(rec, normalize_onvif_object)
+                    for rec in _flush_onvif(pending, now):
+                        await self._store_onvif(rec, normalize_onvif_object)
             except asyncio.CancelledError:
                 raise
             except RtspError as exc:
@@ -139,25 +166,33 @@ class CameraWorker:
             await asyncio.sleep(retry)
             retry = min(retry * 2, RETRY_MAX_SECONDS)
 
-    async def _maybe_emit_onvif(self, obj: dict, seen: Dict[str, float],
-                                now: float, normalize) -> None:
-        # A capture frame is one that carries a picture (or a plate). Plain
-        # tracking frames without either are ignored.
-        if not obj.get("image_b64") and not obj.get("plate"):
-            return
-        # De-duplicate by object id within a short window; a fresh plate for
-        # the same id is treated as a new capture.
-        key = f"{obj.get('object_id', '')}:{obj.get('plate', '')}"
-        if key in seen and now - seen[key] < ONVIF_DEDUP_SECONDS:
-            return
-        seen[key] = now
+    def _accumulate_onvif(self, obj: dict, pending: Dict[str, dict],
+                          now: float) -> list:
+        """Merge an object's frame; emit the record once its image arrives."""
+        oid = obj.get("object_id", "")
+        if not oid and not obj.get("plate") and not obj.get("image_b64"):
+            return []  # empty tracking frame
+        entry = pending.get(oid)
+        if entry is None:
+            entry = {"data": {}, "last": now, "emitted": False}
+            pending[oid] = entry
+        entry["last"] = now
+        _merge_onvif(entry["data"], obj)
+        # The capture is complete once the snapshot image is present.
+        if entry["data"].get("image_b64") and not entry["emitted"]:
+            entry["emitted"] = True
+            return [entry["data"]]
+        return []
 
-        fields = normalize(obj)
+    async def _store_onvif(self, data: dict, normalize) -> None:
+        fields = normalize(data)
         anpr = AnprEvent(
             camera_id=self.camera.id,
             camera_name=self.camera.name,
-            received_at=fields["event_time"] or _now_iso(),
-            image_b64=obj.get("image_b64"),
+            # Use the local receive time (the camera UTC timestamp can be in a
+            # different zone); keep the camera time in event_time.
+            received_at=_now_iso(),
+            image_b64=data.get("image_b64"),
             **fields,
         )
         event_id = self.db.add_event(anpr)

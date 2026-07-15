@@ -222,6 +222,14 @@ $("#live-clear").addEventListener("click", () => {
     '<tr class="empty-row"><td colspan="11">Waiting for events…</td></tr>';
 });
 
+// Double-click the latest-capture image to view it full size.
+$("#detail-image").title = "Double-click for full size";
+$("#detail-image").addEventListener("dblclick", () => {
+  if (currentDetailId != null && $("#detail-image img")) {
+    openImage(currentDetailId, $("#detail-plate").textContent);
+  }
+});
+
 /* -------------------------------------------------------------- search */
 
 let searchOffset = 0;
@@ -585,6 +593,11 @@ function initPlayback() {
   $("#pb-prev").addEventListener("click", () => { pbStop(); pbGo(pbIndex - 1); });
   $("#pb-next").addEventListener("click", () => { pbStop(); pbGo(pbIndex + 1); });
   $("#pb-play").addEventListener("click", pbTogglePlay);
+  $("#pb-image").title = "Double-click for full size";
+  $("#pb-image").addEventListener("dblclick", () => {
+    const ev = pbEvents[pbIndex];
+    if (ev && ev.has_image) openImage(ev.id, ev.plate);
+  });
   renderCalendar();
   // Auto-select today if it has data, else the latest day with data.
   loadCalendar().then(() => {

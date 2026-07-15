@@ -176,7 +176,9 @@ tr.flash { animation: rowflash 1.2s ease-out; }
   overflow: hidden;
   margin-bottom: 12px;
 }
-.plate-image img { width: 100%; height: auto; display: block; }
+.plate-image img { width: 100%; height: auto; max-height: 260px; object-fit: contain; display: block; cursor: zoom-in; }
+.pb-viewer .plate-image { min-height: 260px; max-height: 360px; }
+.pb-viewer .plate-image img { max-height: 356px; }
 .detail-plate {
   font-family: "Consolas", monospace;
   font-size: 26px;
