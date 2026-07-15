@@ -62,11 +62,15 @@ CREATE TABLE IF NOT EXISTS settings (
 
 class Database:
     def __init__(self, path: str = "anpr.db"):
-        self.path = path
+        # Resolve to an absolute path so the database is always the same file
+        # regardless of the process working directory. This avoids the
+        # "records/cameras disappeared after a restart" trap where the server
+        # is launched from a different directory and silently creates a fresh,
+        # empty anpr.db next to it.
+        self.path = os.path.abspath(path)
         self._lock = threading.Lock()
-        directory = os.path.dirname(os.path.abspath(path))
-        os.makedirs(directory, exist_ok=True)
-        self._conn = sqlite3.connect(path, check_same_thread=False)
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(SCHEMA)
         self._conn.commit()
@@ -74,6 +78,12 @@ class Database:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    def counts(self) -> Dict[str, int]:
+        with self._lock:
+            cameras = self._conn.execute("SELECT COUNT(*) FROM cameras").fetchone()[0]
+            events = self._conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        return {"cameras": cameras, "events": events}
 
     # ------------------------------------------------------------- cameras
 

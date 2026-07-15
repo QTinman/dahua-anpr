@@ -26,6 +26,24 @@ def _state(request: Request):
     return request.app.state
 
 
+@router.get("/api/diagnostics")
+async def diagnostics(request: Request):
+    """Report which database file is in use and how much it holds.
+
+    Handy for spotting the 'server started in a different directory and made a
+    fresh empty anpr.db' situation, where the live feed keeps working but
+    cameras and history look empty.
+    """
+    state = _state(request)
+    counts = state.db.counts()
+    return {
+        "database_path": state.db.path,
+        "cameras": counts["cameras"],
+        "events": counts["events"],
+        "demo_mode": state.simulator is not None,
+    }
+
+
 # ------------------------------------------------------------------ cameras
 
 @router.get("/api/cameras")

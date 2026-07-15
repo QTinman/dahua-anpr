@@ -33,6 +33,11 @@ WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db = Database(os.environ.get("ANPR_DB", "anpr.db"))
+    counts = db.counts()
+    logging.getLogger("anpr").info(
+        "Using database %s (%d camera(s), %d event(s))",
+        db.path, counts["cameras"], counts["events"],
+    )
     hub = WebSocketHub()
     manager = CameraManager(db, hub)
     reports = ReportScheduler(db)
