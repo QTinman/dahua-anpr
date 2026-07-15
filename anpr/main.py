@@ -26,6 +26,9 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+# httpx logs every request (including the normal Digest-auth 401 challenges)
+# at INFO, which floods the console. Only surface its warnings/errors.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
 

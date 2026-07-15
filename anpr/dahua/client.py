@@ -54,6 +54,9 @@ class DahuaClient:
         scheme = "https" if use_https else "http"
         self.base_url = f"{scheme}://{host}:{port}"
         self._auth = httpx.DigestAuth(username, password)
+        # Remember which snapManager URL variant this camera accepts, so
+        # reconnects go straight to it instead of re-probing all variants.
+        self._snap_variant: Optional[str] = None
         # Cameras almost always have self-signed certificates.
         self._verify = False if use_https else True
 
@@ -247,7 +250,12 @@ class DahuaClient:
         """
         codes = codes.strip() or DEFAULT_EVENT_CODES
         last_error = "no snapManager variant accepted"
-        for template in SNAP_STREAM_VARIANTS:
+        # Try the previously-working variant first, then the rest.
+        variants = list(SNAP_STREAM_VARIANTS)
+        if self._snap_variant in variants:
+            variants.remove(self._snap_variant)
+            variants.insert(0, self._snap_variant)
+        for template in variants:
             url = self.base_url + template.format(codes=codes, channel=channel)
             try:
                 async with self._client(read_timeout=READ_TIMEOUT) as client:
@@ -255,6 +263,7 @@ class DahuaClient:
                         if resp.status_code != 200:
                             last_error = f"HTTP {resp.status_code}"
                             continue
+                        self._snap_variant = template
                         boundary = _boundary_from_content_type(
                             resp.headers.get("content-type", "")
                         )
