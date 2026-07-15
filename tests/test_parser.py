@@ -2,6 +2,7 @@ import json
 
 from anpr.dahua.parser import (
     MultipartEventParser,
+    extract_image_b64,
     normalize_traffic_event,
     normalize_traffic_record,
     parse_event_body,
@@ -123,6 +124,20 @@ def test_normalize_traffic_event_empty_data():
     assert fields["plate"] == ""
     assert fields["speed"] is None
     assert fields["lane"] is None
+
+
+def test_extract_image_b64_from_nested_metadata():
+    jpeg_b64 = "/9j/" + "A" * 600  # looks like a base64 JPEG
+    data = {"TrafficCar": {"PlateNumber": "ABC123"},
+            "Picture": {"Content": jpeg_b64}}
+    assert extract_image_b64(data) == jpeg_b64
+
+
+def test_extract_image_b64_absent():
+    data = {"TrafficCar": {"PlateNumber": "ABC123"}, "PicName": "snap.jpg"}
+    assert extract_image_b64(data) is None
+    # short strings that merely start like a jpeg are ignored
+    assert extract_image_b64({"x": "/9j/short"}) is None
 
 
 # ---------------------------- RecordFinder history parsing ----------------

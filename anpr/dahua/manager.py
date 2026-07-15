@@ -17,6 +17,7 @@ from ..models import AnprEvent, Camera
 from ..ws import WebSocketHub
 from .client import DahuaClient, DahuaError
 from .parser import (
+    extract_image_b64,
     is_traffic_code,
     normalize_traffic_event,
     normalize_traffic_record,
@@ -123,17 +124,26 @@ class CameraWorker:
             received_at=_now_iso(),
             **fields,
         )
+        # Prefer a picture embedded in the event metadata itself.
+        embedded = extract_image_b64(data)
+        if embedded:
+            anpr.image_b64 = embedded
+
         event_id = self.db.add_event(anpr)
-        self._pending_image_event = event_id
-        self._pending_image_at = asyncio.get_event_loop().time()
+        has_image = embedded is not None
+        if not has_image:
+            # No inline picture: wait for a separate jpeg multipart part.
+            self._pending_image_event = event_id
+            self._pending_image_at = asyncio.get_event_loop().time()
 
         payload = anpr.model_dump()
         payload["id"] = event_id
-        payload["has_image"] = False
+        payload["has_image"] = has_image
         payload.pop("image_b64", None)
         await self.hub.broadcast({"type": "anpr_event", "event": payload})
 
-        if self.camera.snapshot_on_event:
+        # Only pull a live snapshot when the event carried no picture at all.
+        if not has_image and self.camera.snapshot_on_event:
             asyncio.create_task(self._snapshot_fallback(event_id, client))
 
     async def _handle_image(self, image: bytes) -> None:

@@ -233,6 +233,36 @@ def normalize_traffic_event(code: str, data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def extract_image_b64(data: Any) -> Optional[str]:
+    """Find a base64-encoded JPEG embedded anywhere in the event payload.
+
+    Some Dahua firmwares include the plate/scene picture directly in the event
+    metadata (rather than only as a separate multipart image part). A base64
+    JPEG begins with the marker ``/9j/``; we scan strings recursively and
+    return the first plausible match so the picture can be stored without a
+    separate snapshot request.
+    """
+    def scan(obj: Any) -> Optional[str]:
+        if isinstance(obj, str):
+            s = obj.strip()
+            if len(s) > 512 and s[:4] == "/9j/":
+                return s
+            return None
+        if isinstance(obj, dict):
+            for value in obj.values():
+                found = scan(value)
+                if found:
+                    return found
+        elif isinstance(obj, list):
+            for value in obj:
+                found = scan(value)
+                if found:
+                    return found
+        return None
+
+    return scan(data)
+
+
 def is_traffic_code(code: str, subscribed: List[str]) -> bool:
     """True when an event code is one we asked for (or a Traffic* event)."""
     if code in subscribed or "All" in subscribed:

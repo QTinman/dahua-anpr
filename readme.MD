@@ -19,9 +19,10 @@ every capture in SQLite and pushes it live to the browser over a WebSocket.
 - **Live web dashboard** — real-time plate feed with vehicle attributes
   (plate, country, vehicle type/color/brand, speed, direction, lane) and
   per-camera connection status badges.
-- **Plate images** — embedded event images are stored; when an event has no
-  embedded picture the server fetches a snapshot from the camera
-  (`snapshot.cgi`) as a fallback.
+- **Plate images** — the picture included with the event (an embedded base64
+  image in the metadata, or a jpeg part in the stream) is stored. Only when an
+  event carries no picture at all does the server fetch a live snapshot
+  (`snapshot.cgi`) as a fallback — toggled per camera by *Snapshot fallback*.
 - **SQLite persistence** — every event is stored for historical queries.
 - **History sync** — import the camera's own stored ANPR log (Dahua
   `RecordFinder`) so the monitor's history matches the camera's, filling any
