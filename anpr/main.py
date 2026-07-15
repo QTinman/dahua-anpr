@@ -67,7 +67,11 @@ app.include_router(router)
 
 @app.get("/", include_in_schema=False)
 async def index():
-    return FileResponse(os.path.join(WEB_DIR, "index.html"))
+    # never cache the shell so new asset versions are always picked up
+    return FileResponse(
+        os.path.join(WEB_DIR, "index.html"),
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")

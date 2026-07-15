@@ -84,8 +84,10 @@ function onCameraStatus(data) {
     name: data.camera_name, status: data.status, detail: data.detail || "",
   });
   renderBadges();
-  // Refresh camera cards if that tab is open.
-  if ($("#tab-cameras").classList.contains("active")) loadCameras();
+  // Keep the Cameras panel current even when it is not the visible tab, so
+  // switching to it always shows up-to-date cards (and self-heals if a
+  // transient load ever left it empty).
+  loadCameras();
 }
 
 function renderBadges() {
