@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dahua ANPR Monitor</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%234c9aff'/%3E%3Ctext x='8' y='12' font-size='10' text-anchor='middle' fill='white' font-family='monospace' font-weight='bold'%3EP%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="brand-icon">▣</span>
+    <h1>Dahua ANPR Monitor</h1>
+  </div>
+  <nav id="tabs">
+    <button class="tab active" data-tab="live">Live</button>
+    <button class="tab" data-tab="search">Search</button>
+    <button class="tab" data-tab="cameras">Cameras</button>
+    <button class="tab" data-tab="reports">Reports</button>
+  </nav>
+  <div id="ws-status" class="ws-status offline" title="WebSocket connection">offline</div>
+</header>
+
+<main>
+  <!-- ============================= LIVE ============================== -->
+  <section id="tab-live" class="tab-panel active">
+    <div class="toolbar">
+      <div id="camera-badges" class="badges"></div>
+      <label class="pause-toggle"><input type="checkbox" id="live-pause"> Pause feed</label>
+      <button id="live-clear" class="btn small">Clear</button>
+    </div>
+    <div class="live-layout">
+      <div class="table-wrap">
+        <table id="live-table">
+          <thead>
+            <tr>
+              <th>Time</th><th>Camera</th><th>Plate</th><th>Country</th>
+              <th>Vehicle</th><th>Color</th><th>Brand</th><th>Speed</th>
+              <th>Dir</th><th>Lane</th><th>Img</th>
+            </tr>
+          </thead>
+          <tbody id="live-body">
+            <tr class="empty-row"><td colspan="11">Waiting for events…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <aside id="live-detail" class="detail-panel">
+        <h3>Latest capture</h3>
+        <div id="detail-image" class="plate-image empty">no image</div>
+        <div id="detail-plate" class="detail-plate">—</div>
+        <dl id="detail-fields"></dl>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ============================ SEARCH ============================= -->
+  <section id="tab-search" class="tab-panel">
+    <form id="search-form" class="toolbar">
+      <input type="text" id="search-plate" placeholder="Plate (partial ok)">
+      <select id="search-camera"><option value="">All cameras</option></select>
+      <input type="date" id="search-from" title="From date">
+      <input type="date" id="search-to" title="To date">
+      <button type="submit" class="btn primary">Search</button>
+      <button type="button" id="search-export" class="btn">Export CSV</button>
+      <span id="search-count" class="muted"></span>
+    </form>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th><th>Camera</th><th>Plate</th><th>Country</th>
+            <th>Vehicle</th><th>Color</th><th>Brand</th><th>Speed</th>
+            <th>Dir</th><th>Lane</th><th>Img</th>
+          </tr>
+        </thead>
+        <tbody id="search-body">
+          <tr class="empty-row"><td colspan="11">Use the filters above and press Search.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="toolbar">
+      <button id="search-prev" class="btn small" disabled>‹ Prev</button>
+      <span id="search-page" class="muted"></span>
+      <button id="search-next" class="btn small" disabled>Next ›</button>
+    </div>
+  </section>
+
+  <!-- =========================== CAMERAS ============================= -->
+  <section id="tab-cameras" class="tab-panel">
+    <div class="toolbar">
+      <button id="camera-add" class="btn primary">+ Add camera</button>
+    </div>
+    <div id="camera-list" class="camera-cards"></div>
+  </section>
+
+  <!-- =========================== REPORTS ============================= -->
+  <section id="tab-reports" class="tab-panel">
+    <div class="panel">
+      <h2>Scheduled daily report</h2>
+      <p class="muted">Writes a CSV file with all of the day's captures to the
+        directory below, once per day at the configured time (server local time).</p>
+      <form id="report-form" class="form-grid">
+        <label><input type="checkbox" id="report-enabled"> Enabled</label>
+        <label>Time <input type="time" id="report-time" value="23:59"></label>
+        <label>Directory <input type="text" id="report-dir" value="reports"></label>
+        <div class="form-actions">
+          <button type="submit" class="btn primary">Save</button>
+          <button type="button" id="report-run" class="btn">Generate now</button>
+          <span id="report-msg" class="muted"></span>
+        </div>
+      </form>
+    </div>
+  </section>
+</main>
+
+<!-- Camera add/edit dialog -->
+<dialog id="camera-dialog">
+  <form id="camera-form" method="dialog">
+    <h2 id="camera-dialog-title">Add camera</h2>
+    <div class="form-grid">
+      <label>Name <input type="text" id="cam-name" required maxlength="100"></label>
+      <label>IP / hostname <input type="text" id="cam-host" required></label>
+      <label>Port <input type="number" id="cam-port" value="80" min="1" max="65535"></label>
+      <label>Username <input type="text" id="cam-username" value="admin" autocomplete="off"></label>
+      <label>Password <input type="password" id="cam-password" autocomplete="new-password"
+             placeholder=""></label>
+      <label>Channel <input type="number" id="cam-channel" value="1" min="1"></label>
+      <label>Event codes <input type="text" id="cam-codes" value="TrafficJunction"
+             title="Comma separated Dahua event codes, e.g. TrafficJunction,TrafficRedList"></label>
+      <label><input type="checkbox" id="cam-https"> Use HTTPS</label>
+      <label><input type="checkbox" id="cam-snapshot" checked> Snapshot on event</label>
+      <label><input type="checkbox" id="cam-enabled" checked> Enabled</label>
+    </div>
+    <div class="form-actions">
+      <button type="button" id="cam-test" class="btn">Test connection</button>
+      <span id="cam-test-result" class="muted"></span>
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="btn primary" id="cam-save">Save</button>
+      <button type="button" class="btn" id="cam-cancel">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Image lightbox -->
+<dialog id="image-dialog">
+  <img id="image-dialog-img" alt="Plate capture">
+  <button class="btn" id="image-dialog-close">Close</button>
+</dialog>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
