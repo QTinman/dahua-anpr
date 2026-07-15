@@ -163,31 +163,36 @@ class RtspMetadataClient:
         Diagnostic only (no SETUP/PLAY): used to find where a camera publishes
         its ONVIF metadata track.
         """
-        try:
-            self._reader, self._writer = await asyncio.wait_for(
-                asyncio.open_connection(self.host, self.port), timeout=10.0)
-        except (OSError, asyncio.TimeoutError) as exc:
-            raise RtspError(f"RTSP connect failed: {exc}") from exc
         results: Dict[str, object] = {}
         candidates = self._candidate_urls() + [self._url(1)]
         seen = set()
-        try:
-            for i, url in enumerate(candidates):
-                if url in seen:
-                    continue
-                seen.add(url)
-                self._base = url
-                entry: Dict[str, object] = {"url": url}
-                try:
-                    sdp = await self._describe()
-                    entry["media"] = _sdp_media_summary(sdp)
-                    entry["has_metadata"] = any(
-                        m["media"] == "application" for m in entry["media"])
-                except RtspError as exc:
-                    entry["error"] = str(exc)
+        for i, url in enumerate(candidates):
+            if url in seen:
+                continue
+            seen.add(url)
+            entry: Dict[str, object] = {"url": url}
+            # A fresh connection per URL: some cameras close the socket after an
+            # error, which would poison later probes on a shared connection.
+            self._cseq = 0
+            self._session = ""
+            self._base = url
+            try:
+                self._reader, self._writer = await asyncio.wait_for(
+                    asyncio.open_connection(self.host, self.port), timeout=10.0)
+            except (OSError, asyncio.TimeoutError) as exc:
+                entry["error"] = f"connect failed: {exc}"
                 results[f"stream{i}"] = entry
-        finally:
-            await self._close()
+                continue
+            try:
+                sdp = await self._describe()
+                entry["media"] = _sdp_media_summary(sdp)
+                entry["has_metadata"] = any(
+                    m["media"] == "application" for m in entry["media"])
+            except RtspError as exc:
+                entry["error"] = str(exc)
+            finally:
+                await self._close()
+            results[f"stream{i}"] = entry
         return results
 
     async def _close(self) -> None:
