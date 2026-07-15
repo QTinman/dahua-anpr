@@ -49,7 +49,7 @@ document.querySelectorAll(".tab").forEach((btn) => {
     if (btn.dataset.tab === "search") populateCameraFilter();
     if (btn.dataset.tab === "playback") initPlayback();
     if (btn.dataset.tab === "whitelist") loadWhitelist();
-    if (btn.dataset.tab === "reports") loadAccessSettings();
+    if (btn.dataset.tab === "reports") { loadAccessSettings(); loadAccessLog(); }
   });
 });
 
@@ -70,6 +70,7 @@ function connectWs() {
     if (data.type === "anpr_event") onLiveEvent(data.event);
     else if (data.type === "camera_status") onCameraStatus(data);
     else if (data.type === "event_image") onEventImage(data.event_id);
+    else if (data.type === "access_log") onAccessLog(data.entry);
   };
 }
 
@@ -896,6 +897,49 @@ $("#acc-gate-test").addEventListener("click", async () => {
     else { msg.textContent = "✗ " + r.error; msg.className = "msg-err"; }
   } catch (err) { msg.textContent = "✗ " + err.message; msg.className = "msg-err"; }
 });
+
+const ACC_ACTIONS = { gate_open: "Gate open", email_alert: "Email alert" };
+
+function accLogRowHtml(e) {
+  const action = ACC_ACTIONS[e.action] || e.action;
+  const res = e.result === "ok"
+    ? '<span class="msg-ok">ok</span>'
+    : `<span class="msg-err">error</span>`;
+  return `<td>${esc(fmtTime(e.time))}</td>`
+    + `<td><span class="plate-chip">${esc(e.plate || "?")}</span></td>`
+    + `<td>${esc(e.camera_name)}</td><td>${esc(action)}</td>`
+    + `<td>${res}</td><td class="muted">${esc(e.detail || "")}</td>`;
+}
+
+async function loadAccessLog() {
+  const body = $("#acc-log-body");
+  let entries;
+  try { entries = await api("/api/access/log?limit=200"); }
+  catch (_) { return; }
+  body.innerHTML = "";
+  if (!entries.length) {
+    body.innerHTML = '<tr class="empty-row"><td colspan="6">No access events yet.</td></tr>';
+    return;
+  }
+  for (const e of entries) {
+    const row = document.createElement("tr");
+    row.innerHTML = accLogRowHtml(e);
+    body.appendChild(row);
+  }
+}
+
+function onAccessLog(entry) {
+  const body = $("#acc-log-body");
+  if (!body) return;
+  body.querySelector(".empty-row")?.remove();
+  const row = document.createElement("tr");
+  row.className = "flash";
+  row.innerHTML = accLogRowHtml(entry);
+  body.prepend(row);
+  while (body.children.length > 300) body.lastChild.remove();
+}
+
+$("#acc-log-refresh").addEventListener("click", loadAccessLog);
 
 $("#acc-email-test").addEventListener("click", async () => {
   const msg = $("#acc-email-msg");

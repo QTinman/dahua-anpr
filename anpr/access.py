@@ -13,6 +13,7 @@ import asyncio
 import base64
 import logging
 import smtplib
+from datetime import datetime
 from email.message import EmailMessage
 from typing import Dict
 
@@ -26,9 +27,17 @@ SETTINGS_KEY = "access_settings"
 
 
 class AccessController:
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, hub=None):
         self.db = db
+        self.hub = hub
         self._last_action: Dict[str, float] = {}  # normalised plate -> monotonic
+
+    async def _log(self, action: str, plate: str, camera_name: str,
+                   result: str, detail: str = "") -> None:
+        ts = datetime.now().astimezone().isoformat(timespec="seconds")
+        entry = self.db.add_access_log(ts, plate, camera_name, action, result, detail)
+        if self.hub is not None:
+            await self.hub.broadcast({"type": "access_log", "entry": entry})
 
     # ------------------------------------------------------------ settings
 
@@ -79,11 +88,15 @@ class AccessController:
         try:
             await client.trigger(settings.gate_open_path)
             log.info("Gate opened for %s on %s", event.plate, camera.name)
+            await self._log("gate_open", event.plate, camera.name, "ok",
+                            "whitelisted")
             if settings.gate_close_path and settings.gate_pulse_seconds > 0:
                 await asyncio.sleep(settings.gate_pulse_seconds)
                 await client.trigger(settings.gate_close_path)
         except DahuaError as exc:
             log.warning("Gate open failed for %s: %s", camera.name, exc)
+            await self._log("gate_open", event.plate, camera.name, "error",
+                            str(exc))
 
     async def test_gate(self, camera: Camera, settings: AccessSettings) -> None:
         client = DahuaClient(camera.host, camera.port, camera.username,
@@ -100,8 +113,12 @@ class AccessController:
         try:
             await asyncio.to_thread(self._send_email_sync, settings, event, camera)
             log.info("Alert email sent for unlisted plate %s", event.plate)
+            await self._log("email_alert", event.plate, camera.name, "ok",
+                            settings.email_to)
         except Exception as exc:
             log.warning("Alert email failed: %s", exc)
+            await self._log("email_alert", event.plate, camera.name, "error",
+                            str(exc))
 
     async def send_test_email(self, settings: AccessSettings) -> None:
         sample = AnprEvent(camera_id=0, camera_name="Test", plate="TEST123",

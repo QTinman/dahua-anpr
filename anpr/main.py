@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
         db.path, counts["cameras"], counts["events"],
     )
     hub = WebSocketHub()
-    access = AccessController(db)
+    access = AccessController(db, hub)
     manager = CameraManager(db, hub, access)
     reports = ReportScheduler(db)
 

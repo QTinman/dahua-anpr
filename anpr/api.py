@@ -323,6 +323,12 @@ async def set_access_settings(request: Request, body: AccessSettings):
     return AccessSettingsPublic.from_settings(body)
 
 
+@router.get("/api/access/log")
+async def access_log(request: Request, limit: int = 200):
+    limit = max(1, min(limit, 1000))
+    return _state(request).db.list_access_log(limit)
+
+
 @router.post("/api/access/test-gate")
 async def test_gate(request: Request, camera_id: int):
     state = _state(request)

@@ -68,6 +68,17 @@ CREATE TABLE IF NOT EXISTS whitelist (
     created_at TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_whitelist_norm ON whitelist(plate_norm);
+
+CREATE TABLE IF NOT EXISTS access_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    time TEXT NOT NULL,
+    plate TEXT NOT NULL DEFAULT '',
+    camera_name TEXT NOT NULL DEFAULT '',
+    action TEXT NOT NULL DEFAULT '',
+    result TEXT NOT NULL DEFAULT '',
+    detail TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_access_log_id ON access_log(id);
 """
 
 
@@ -374,6 +385,29 @@ class Database:
                 "SELECT 1 FROM whitelist WHERE plate_norm = ? LIMIT 1", (norm,)
             ).fetchone()
         return row is not None
+
+    # ---------------------------------------------------------- access log
+
+    def add_access_log(self, time: str, plate: str, camera_name: str,
+                       action: str, result: str, detail: str = "") -> Dict[str, Any]:
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO access_log (time, plate, camera_name, action, "
+                "result, detail) VALUES (?, ?, ?, ?, ?, ?)",
+                (time, plate, camera_name, action, result, detail),
+            )
+            self._conn.commit()
+            entry_id = cur.lastrowid
+        return {"id": entry_id, "time": time, "plate": plate,
+                "camera_name": camera_name, "action": action,
+                "result": result, "detail": detail}
+
+    def list_access_log(self, limit: int = 200) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM access_log ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     def get_setting(self, key: str, default: Any = None) -> Any:
         with self._lock:

@@ -43,6 +43,7 @@ every capture in SQLite and pushes it live to the browser over a WebSocket.
   UI; open a gate by firing the capturing camera's alarm output when a
   whitelisted plate is seen, and/or email an alert when a plate is *not*
   whitelisted. Gate CGI paths are configurable, with Test buttons for both.
+  An **access log** records every gate opening and email alert (live-updated).
 - **Scheduled reports** — daily CSV report at a configurable time/directory,
   plus on-demand generation.
 - **Camera management UI** — add/edit/delete cameras (IP, port, credentials,
@@ -164,6 +165,7 @@ tests/                 # pytest suite (parser + API)
 | GET/PUT| `/api/settings/access` | Whitelist gate/email configuration |
 | POST   | `/api/access/test-gate` | Fire a camera's gate output now (`camera_id`) |
 | POST   | `/api/access/test-email` | Send a test alert email |
+| GET    | `/api/access/log` | Recent gate-open / email-alert actions |
 | GET/PUT| `/api/settings/report` | Daily report configuration |
 | POST   | `/api/reports/run` | Generate a report now |
 | WS     | `/ws` | Live events + camera status push |
