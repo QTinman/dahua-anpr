@@ -322,9 +322,11 @@ class RtspMetadataClient:
             return self.base_url
         if control.startswith("rtsp://"):
             return control
-        # Relative control: append to the base URL.
-        if "?" in self.base_url and control.startswith("trackID"):
-            return f"{self.base_url}&{control}"
+        # Relative control is appended as a PATH segment, even when the base
+        # URL has a query string (the live555/ffmpeg convention Dahua expects):
+        #   rtsp://.../cam/realmonitor?channel=1&subtype=0&proto=Onvif/trackID=4
+        # Appending it as a query parameter instead makes Dahua reject SETUP
+        # with "451 Parameter Not Understood".
         sep = "" if self.base_url.endswith("/") else "/"
         return f"{self.base_url}{sep}{control}"
 
