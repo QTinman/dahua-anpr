@@ -344,6 +344,21 @@ async function loadCameras() {
   wrap.innerHTML = "";
   if (!cameras.length) {
     wrap.innerHTML = '<p class="muted">No cameras configured yet. Click "Add camera" to get started.</p>';
+    // Show which database file this server is using. If you configured a
+    // camera before but see 0 here, the server was started from a different
+    // directory and is reading a fresh, empty database — your data is still
+    // in the original anpr.db. Pin ANPR_DB to a fixed absolute path.
+    try {
+      const d = await api("/api/diagnostics");
+      wrap.insertAdjacentHTML("beforeend",
+        `<p class="muted" style="margin-top:10px;font-size:12px">`
+        + `Server database: <code>${esc(d.database_path)}</code><br>`
+        + `This file currently holds ${d.cameras} camera(s) and ${d.events} event(s). `
+        + `If you expected data here, the server is likely reading a different `
+        + `anpr.db than before — set <code>ANPR_DB</code> to a fixed absolute path.`
+        + `</p>`);
+    } catch (_) { /* diagnostics optional */ }
+    return;
   }
   for (const cam of cameras) {
     // Live status from WS beats the snapshot from the API response.
