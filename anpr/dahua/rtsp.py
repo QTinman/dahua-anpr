@@ -140,6 +140,33 @@ class RtspMetadataClient:
         finally:
             await self._close()
 
+    async def describe_all(self) -> Dict[str, object]:
+        """DESCRIBE the candidate streams and report their SDP + media tracks.
+
+        Diagnostic only (no SETUP/PLAY): used to find where a camera publishes
+        its ONVIF metadata track.
+        """
+        try:
+            self._reader, self._writer = await asyncio.wait_for(
+                asyncio.open_connection(self.host, self.port), timeout=10.0)
+        except (OSError, asyncio.TimeoutError) as exc:
+            raise RtspError(f"RTSP connect failed: {exc}") from exc
+        results: Dict[str, object] = {}
+        try:
+            for subtype in (0, 1):
+                self._base = self._url(subtype)
+                entry: Dict[str, object] = {"url": self._base}
+                try:
+                    sdp = await self._describe()
+                    entry["media"] = _sdp_media_summary(sdp)
+                    entry["sdp"] = sdp[:4000]
+                except RtspError as exc:
+                    entry["error"] = str(exc)
+                results[f"subtype{subtype}"] = entry
+        finally:
+            await self._close()
+        return results
+
     async def _close(self) -> None:
         if self._writer is not None:
             try:
@@ -316,6 +343,28 @@ class RtspMetadataClient:
         length = headers.get("content-length")
         if length and length.isdigit():
             await self._reader.readexactly(int(length))
+
+
+def _sdp_media_summary(sdp: str) -> List[Dict[str, str]]:
+    """Summarise each m= media section: type, rtpmap and control URL."""
+    summary: List[Dict[str, str]] = []
+    current: Optional[Dict[str, str]] = None
+    for line in sdp.splitlines():
+        line = line.strip()
+        if line.startswith("m="):
+            if current:
+                summary.append(current)
+            parts = line[2:].split()
+            current = {"media": parts[0] if parts else "",
+                       "format": " ".join(parts[1:]) if len(parts) > 1 else "",
+                       "rtpmap": "", "control": ""}
+        elif current is not None and line.startswith("a=rtpmap:"):
+            current["rtpmap"] = line[len("a=rtpmap:"):]
+        elif current is not None and line.startswith("a=control:"):
+            current["control"] = line[len("a=control:"):]
+    if current:
+        summary.append(current)
+    return summary
 
 
 def _sdp_control(block: str) -> str:
