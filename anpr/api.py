@@ -89,6 +89,22 @@ async def delete_camera(request: Request, camera_id: int):
         raise HTTPException(404, "Camera not found")
 
 
+@router.post("/api/cameras/{camera_id}/sync")
+async def sync_history(request: Request, camera_id: int):
+    """Import the camera's stored ANPR history into the local database."""
+    state = _state(request)
+    camera = state.db.get_camera(camera_id)
+    if camera is None:
+        raise HTTPException(404, "Camera not found")
+    try:
+        summary = await state.manager.sync_history(camera)
+    except DahuaError as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    return {"ok": True, **summary}
+
+
 @router.post("/api/cameras/test")
 async def test_connection(request: Request, body: TestConnectionRequest):
     state = _state(request)

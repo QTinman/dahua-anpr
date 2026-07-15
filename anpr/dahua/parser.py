@@ -238,3 +238,125 @@ def is_traffic_code(code: str, subscribed: List[str]) -> bool:
     if code in subscribed or "All" in subscribed:
         return True
     return code.startswith("Traffic")
+
+
+# --------------------------------------------------------------------------
+# RecordFinder history parsing (for importing the camera's stored ANPR log)
+# --------------------------------------------------------------------------
+
+_RECORD_KEY_RE = re.compile(r"^\w+\[(\d+)\]\.(.+)$")
+
+
+def parse_find_records(text: str) -> List[Dict[str, str]]:
+    """Parse a Dahua RecordFinder ``doFind`` response into a list of dicts.
+
+    The response is a flat key=value list where each record is indexed::
+
+        found=11
+        records[0].PlateNumber=SSE00
+        records[0].Time=2026-07-15 11:18:00
+        records[0].TrafficCar.VehicleColor=White
+        records[1].PlateNumber=TT020
+        ...
+
+    Firmwares use either ``records[i]`` or ``items[i]`` and may nest fields
+    (``records[0].TrafficCar.PlateNumber``). We index by the integer in the
+    brackets and keep the remainder of the key as the (possibly dotted) field
+    name; normalisation flattens dotted names later.
+    """
+    groups: Dict[int, Dict[str, str]] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        match = _RECORD_KEY_RE.match(key.strip())
+        if not match:
+            continue
+        idx = int(match.group(1))
+        field = match.group(2).strip()
+        groups.setdefault(idx, {})[field] = value.strip()
+    return [groups[i] for i in sorted(groups)]
+
+
+def parse_find_count(text: str) -> Optional[int]:
+    """Extract the ``found=N`` / ``count=N`` total from a RecordFinder reply."""
+    for line in text.splitlines():
+        line = line.strip()
+        for key in ("found=", "count=", "total=", "sn="):
+            if line.lower().startswith(key):
+                try:
+                    return int(line.split("=", 1)[1].strip())
+                except ValueError:
+                    return None
+    return None
+
+
+def parse_finder_object(text: str) -> Optional[str]:
+    """Extract the finder object id from a ``factory.create`` reply.
+
+    Response looks like ``result=1234`` (older) or ``<id>`` on its own line.
+    """
+    for line in text.splitlines():
+        line = line.strip()
+        if line.lower().startswith("result="):
+            return line.split("=", 1)[1].strip()
+    stripped = text.strip()
+    if stripped.isdigit():
+        return stripped
+    return None
+
+
+def _flat_get(rec: Dict[str, str], *names: str) -> str:
+    """Look up a field by exact key or by matching the last dotted segment."""
+    for name in names:
+        value = rec.get(name)
+        if value not in (None, ""):
+            return value
+    for key, value in rec.items():
+        if value in (None, ""):
+            continue
+        if key.split(".")[-1] in names:
+            return value
+    return ""
+
+
+def _record_time(rec: Dict[str, str]) -> str:
+    """Return the record timestamp as an ISO-ish string.
+
+    Dahua stores time either as ``YYYY-MM-DD HH:MM:SS`` or as a Unix epoch.
+    Epoch conversion is done without ``datetime.now`` so it stays pure.
+    """
+    raw = _flat_get(rec, "Time", "SnapTime", "UTC", "CreateTime", "DeviceTime")
+    if not raw:
+        return ""
+    if raw.isdigit() and len(raw) >= 9:
+        # Unix seconds -> UTC string, avoiding tz/locale surprises.
+        try:
+            from datetime import datetime, timezone
+            return datetime.fromtimestamp(int(raw), tz=timezone.utc) \
+                .astimezone().isoformat(timespec="seconds")
+        except (ValueError, OSError, OverflowError):
+            return raw
+    return raw
+
+
+def normalize_traffic_record(rec: Dict[str, str]) -> Dict[str, Any]:
+    """Map a flat RecordFinder record to AnprEvent-style fields."""
+    direction = _flat_get(rec, "Direction", "DrivingDirection")
+    direction = _DIRECTION_NAMES.get(direction, direction)
+    return {
+        "event_code": "TrafficJunction",
+        "plate": _flat_get(rec, "PlateNumber", "Text", "Plate"),
+        "plate_color": _flat_get(rec, "PlateColor"),
+        "plate_type": _flat_get(rec, "PlateType"),
+        "country": _flat_get(rec, "Country", "PlateCountry", "Region"),
+        "vehicle_type": _flat_get(rec, "VehicleType", "Category", "CarType"),
+        "vehicle_color": _flat_get(rec, "VehicleColor", "CarColor"),
+        "vehicle_brand": _flat_get(rec, "VehicleSign", "Brand", "VehicleBrand"),
+        "vehicle_size": _flat_get(rec, "VehicleSize", "CarSize"),
+        "speed": _as_float(_flat_get(rec, "Speed", "VehicleSpeed")),
+        "direction": direction,
+        "lane": _as_int(_flat_get(rec, "Lane", "LaneNumber", "LaneID")),
+        "event_time": _record_time(rec),
+    }

@@ -185,6 +185,16 @@ class Database:
             self._conn.commit()
             return cur.lastrowid
 
+    def event_exists(self, camera_id: int, plate: str, event_time: str) -> bool:
+        """Used to avoid importing history records already in the database."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM events WHERE camera_id = ? AND plate = ? "
+                "AND event_time = ? LIMIT 1",
+                (camera_id, plate, event_time),
+            ).fetchone()
+        return row is not None
+
     def set_event_image(self, event_id: int, image_b64: str) -> None:
         with self._lock:
             self._conn.execute(

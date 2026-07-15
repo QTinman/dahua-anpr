@@ -10,11 +10,20 @@ The two endpoints used here:
 """
 
 import asyncio
-from typing import AsyncIterator, Dict, Optional
+from typing import AsyncIterator, Dict, List, Optional
 
 import httpx
 
-from .parser import MultipartEventParser, ParsedPart
+from .parser import (
+    MultipartEventParser,
+    ParsedPart,
+    parse_find_records,
+    parse_finder_object,
+)
+
+# Record set names used by Dahua ITC / ANPR firmwares for the stored plate log.
+# Tried in order; the first that yields records wins.
+TRAFFIC_RECORD_NAMES = ("TrafficSnapEventInfo", "TrafficSnap", "TrafficRedList")
 
 DEFAULT_EVENT_CODES = "TrafficJunction"
 HEARTBEAT_SECONDS = 5
@@ -87,6 +96,64 @@ class DahuaClient:
         except httpx.HTTPError:
             pass
         return None
+
+    async def find_traffic_records(
+        self, max_records: int = 500
+    ) -> List[Dict[str, str]]:
+        """Fetch stored ANPR records from the camera via RecordFinder.
+
+        Returns a list of flat record dicts (newest-first as the camera
+        provides them). Best-effort: if the firmware does not expose the
+        record set, returns an empty list rather than raising.
+        """
+        base = f"{self.base_url}/cgi-bin/recordFinder.cgi"
+        async with self._client(read_timeout=30.0) as client:
+            for name in TRAFFIC_RECORD_NAMES:
+                try:
+                    records = await self._find_one(client, base, name, max_records)
+                except httpx.HTTPError as exc:
+                    raise DahuaError(f"History query failed: {exc}") from exc
+                if records:
+                    return records
+        return []
+
+    async def _find_one(
+        self, client: httpx.AsyncClient, base: str, name: str, max_records: int
+    ) -> List[Dict[str, str]]:
+        create = await client.get(f"{base}?action=factory.create&name={name}")
+        if create.status_code == 401:
+            raise DahuaError("Authentication failed (check username/password)")
+        if create.status_code != 200:
+            return []
+        obj = parse_finder_object(create.text)
+        if obj is None:
+            return []
+        records: List[Dict[str, str]] = []
+        try:
+            await client.get(
+                f"{base}?action=startFind&object={obj}&count={max_records}"
+            )
+            while len(records) < max_records:
+                batch_size = min(100, max_records - len(records))
+                resp = await client.get(
+                    f"{base}?action=doFind&object={obj}&count={batch_size}"
+                )
+                if resp.status_code != 200:
+                    break
+                batch = parse_find_records(resp.text)
+                if not batch:
+                    break
+                records.extend(batch)
+                if len(batch) < batch_size:
+                    break
+        finally:
+            # Always release the finder object on the camera.
+            try:
+                await client.get(f"{base}?action=stopFind&object={obj}")
+                await client.get(f"{base}?action=factory.destroy&object={obj}")
+            except httpx.HTTPError:
+                pass
+        return records[:max_records]
 
     async def stream_events(
         self, codes: str = DEFAULT_EVENT_CODES

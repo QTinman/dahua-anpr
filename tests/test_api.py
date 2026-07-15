@@ -107,6 +107,27 @@ def test_report_settings_roundtrip(client, tmp_path):
     assert os.path.exists(resp.json()["path"])
 
 
+def test_sync_history_unreachable(client):
+    resp = client.post("/api/cameras", json={
+        "name": "Gate 1", "host": "192.0.2.1", "port": 81,
+        "username": "admin", "password": "x", "enabled": False,
+    })
+    camera_id = resp.json()["id"]
+    resp = client.post(f"/api/cameras/{camera_id}/sync")
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is False
+
+    assert client.post("/api/cameras/99999/sync").status_code == 404
+
+
+def test_diagnostics(client):
+    resp = client.get("/api/diagnostics")
+    data = resp.json()
+    assert "database_path" in data
+    assert data["cameras"] == 0
+    assert data["demo_mode"] is False
+
+
 def test_connection_test_unreachable(client):
     resp = client.post("/api/cameras/test", json={
         "host": "192.0.2.1", "port": 81, "username": "admin", "password": "x",

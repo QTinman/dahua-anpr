@@ -23,6 +23,9 @@ every capture in SQLite and pushes it live to the browser over a WebSocket.
   embedded picture the server fetches a snapshot from the camera
   (`snapshot.cgi`) as a fallback.
 - **SQLite persistence** — every event is stored for historical queries.
+- **History sync** — import the camera's own stored ANPR log (Dahua
+  `RecordFinder`) so the monitor's history matches the camera's, filling any
+  gaps from before the monitor was connected. Duplicates are skipped.
 - **Search & filtering** — by plate (partial match), camera and date range,
   with pagination and CSV export.
 - **Scheduled reports** — daily CSV report at a configurable time/directory,
@@ -69,6 +72,13 @@ A virtual "Demo Camera" generates a random plate event every few seconds.
 | Event stream       | `GET /cgi-bin/eventManager.cgi?action=attach&codes=[TrafficJunction]&heartbeat=5` |
 | Connection test    | `GET /cgi-bin/magicBox.cgi?action=getDeviceType` |
 | Snapshot fallback  | `GET /cgi-bin/snapshot.cgi?channel=N` |
+| History import     | `GET /cgi-bin/recordFinder.cgi?action=factory.create&name=TrafficSnapEventInfo` (then `startFind`/`doFind`) |
+
+> **Note on record counts.** The camera keeps its own on-device event log; the
+> live stream only delivers events from the moment the monitor connects. If the
+> monitor shows fewer records than the camera's web UI, use **Sync history** on
+> the Cameras tab to import the stored log. To capture *Manual Snapshot* events
+> too, set the camera's **Event codes** to `All`.
 
 The event stream is a long-lived `multipart/x-mixed-replace` response. Each
 part carries `Code=TrafficJunction;action=Start;index=0;data={...json...}`;
@@ -110,6 +120,8 @@ tests/                 # pytest suite (parser + API)
 | PUT    | `/api/cameras/{id}` | Update a camera (empty password = keep) |
 | DELETE | `/api/cameras/{id}` | Delete a camera (events are kept) |
 | POST   | `/api/cameras/test` | Test a connection without saving |
+| POST   | `/api/cameras/{id}/sync` | Import the camera's stored ANPR history |
+| GET    | `/api/diagnostics` | Which database file is in use, plus row counts |
 | GET    | `/api/events` | Search events (`plate`, `camera_id`, `date_from`, `date_to`, `limit`, `offset`) |
 | GET    | `/api/events/{id}/image` | Plate image (jpeg/png) |
 | GET    | `/api/events/export.csv` | CSV export with the same filters |

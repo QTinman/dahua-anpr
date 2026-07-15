@@ -16,7 +16,11 @@ from ..database import Database
 from ..models import AnprEvent, Camera
 from ..ws import WebSocketHub
 from .client import DahuaClient, DahuaError
-from .parser import is_traffic_code, normalize_traffic_event
+from .parser import (
+    is_traffic_code,
+    normalize_traffic_event,
+    normalize_traffic_record,
+)
 
 log = logging.getLogger("anpr.manager")
 
@@ -195,6 +199,42 @@ class CameraManager:
         if worker is None:
             return ("disabled", "") if not enabled else ("stopped", "")
         return worker.status, worker.status_detail
+
+    async def sync_history(self, camera: Camera, max_records: int = 500) -> dict:
+        """Import the camera's stored ANPR records that we don't already have.
+
+        Returns a summary dict: how many records the camera returned, how many
+        were new (imported) and how many were duplicates already present.
+        """
+        client = DahuaClient(camera.host, camera.port, camera.username,
+                             camera.password, camera.use_https)
+        records = await client.find_traffic_records(max_records=max_records)
+        imported = 0
+        duplicates = 0
+        for rec in records:
+            fields = normalize_traffic_record(rec)
+            if not fields["plate"] and not fields["event_time"]:
+                continue
+            if self.db.event_exists(camera.id, fields["plate"], fields["event_time"]):
+                duplicates += 1
+                continue
+            anpr = AnprEvent(
+                camera_id=camera.id,
+                camera_name=camera.name,
+                received_at=fields["event_time"] or _now_iso(),
+                **fields,
+            )
+            event_id = self.db.add_event(anpr)
+            imported += 1
+            payload = anpr.model_dump()
+            payload["id"] = event_id
+            payload["has_image"] = False
+            payload.pop("image_b64", None)
+            await self.hub.broadcast({"type": "anpr_event", "event": payload})
+        log.info("History sync for %s: %d found, %d imported, %d duplicates",
+                 camera.name, len(records), imported, duplicates)
+        return {"found": len(records), "imported": imported,
+                "duplicates": duplicates}
 
     def status_snapshot(self) -> list:
         """Current status of every camera, for newly connected browsers."""

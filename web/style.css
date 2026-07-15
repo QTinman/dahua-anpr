@@ -204,7 +204,8 @@ dd { margin: 0; }
 .camera-card h3 { margin: 0; font-size: 15px; flex: 1; }
 .camera-card .cam-meta { color: var(--muted); font-size: 13px; margin-bottom: 4px; }
 .camera-card .cam-detail { color: var(--err); font-size: 12px; min-height: 16px; margin-bottom: 10px; word-break: break-word; white-space: normal; }
-.camera-card .cam-actions { display: flex; gap: 8px; }
+.camera-card .cam-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.camera-card .cam-sync { font-size: 12px; margin-top: 8px; min-height: 14px; word-break: break-word; white-space: normal; }
 
 .panel {
   background: var(--bg-panel);

@@ -3,7 +3,10 @@ import json
 from anpr.dahua.parser import (
     MultipartEventParser,
     normalize_traffic_event,
+    normalize_traffic_record,
     parse_event_body,
+    parse_find_records,
+    parse_finder_object,
 )
 
 TRAFFIC_JSON = {
@@ -120,3 +123,71 @@ def test_normalize_traffic_event_empty_data():
     assert fields["plate"] == ""
     assert fields["speed"] is None
     assert fields["lane"] is None
+
+
+# ---------------------------- RecordFinder history parsing ----------------
+
+FIND_RESPONSE = """found=3
+records[0].PlateNumber=SSE00
+records[0].Time=2026-07-15 11:18:00
+records[0].PlateColor=White
+records[0].TrafficCar.VehicleColor=White
+records[0].TrafficCar.VehicleType=Sedan
+records[0].Speed=42
+records[0].Lane=1
+records[1].PlateNumber=TT020
+records[1].Time=2026-07-15 11:10:00
+records[1].Country=DEU
+records[2].PlateNumber=
+records[2].Time=2026-07-15 11:09:00
+records[2].Country=Unknown
+"""
+
+
+def test_parse_finder_object():
+    assert parse_finder_object("result=1234\r\n") == "1234"
+    assert parse_finder_object("567") == "567"
+    assert parse_finder_object("error") is None
+
+
+def test_parse_find_records_groups_by_index():
+    records = parse_find_records(FIND_RESPONSE)
+    assert len(records) == 3
+    assert records[0]["PlateNumber"] == "SSE00"
+    assert records[0]["TrafficCar.VehicleColor"] == "White"
+    assert records[1]["PlateNumber"] == "TT020"
+    assert records[2]["PlateNumber"] == ""
+
+
+def test_parse_find_records_items_prefix():
+    text = "items[0].PlateNumber=ABC123\nitems[0].Time=2026-07-15 10:00:00"
+    records = parse_find_records(text)
+    assert len(records) == 1
+    assert records[0]["PlateNumber"] == "ABC123"
+
+
+def test_normalize_traffic_record_nested_and_flat():
+    records = parse_find_records(FIND_RESPONSE)
+    first = normalize_traffic_record(records[0])
+    assert first["plate"] == "SSE00"
+    assert first["plate_color"] == "White"
+    assert first["vehicle_color"] == "White"   # from nested TrafficCar.*
+    assert first["vehicle_type"] == "Sedan"
+    assert first["speed"] == 42.0
+    assert first["lane"] == 1
+    assert first["event_time"] == "2026-07-15 11:18:00"
+
+
+def test_normalize_traffic_record_unix_time():
+    rec = {"PlateNumber": "XYZ", "Time": "1752574680"}
+    fields = normalize_traffic_record(rec)
+    assert fields["plate"] == "XYZ"
+    # Epoch converted to an ISO string (contains the date separator).
+    assert "T" in fields["event_time"]
+
+
+def test_normalize_traffic_record_unlicensed():
+    records = parse_find_records(FIND_RESPONSE)
+    third = normalize_traffic_record(records[2])
+    assert third["plate"] == ""
+    assert third["event_time"] == "2026-07-15 11:09:00"

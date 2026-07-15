@@ -362,10 +362,35 @@ async function loadCameras() {
       <div class="cam-detail">${esc(detail || "")}</div>
       <div class="cam-actions">
         <button class="btn small" data-action="edit">Edit</button>
+        <button class="btn small" data-action="sync">Sync history</button>
         <button class="btn small" data-action="toggle">${cam.enabled ? "Disable" : "Enable"}</button>
         <button class="btn small danger" data-action="delete">Delete</button>
-      </div>`;
+      </div>
+      <div class="cam-sync muted"></div>`;
     card.querySelector('[data-action="edit"]').addEventListener("click", () => openCameraDialog(cam));
+    card.querySelector('[data-action="sync"]').addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      const out = card.querySelector(".cam-sync");
+      btn.disabled = true;
+      out.className = "cam-sync muted";
+      out.textContent = "Importing history from camera…";
+      try {
+        const r = await api(`/api/cameras/${cam.id}/sync`, { method: "POST" });
+        if (r.ok) {
+          out.className = "cam-sync msg-ok";
+          out.textContent = `Imported ${r.imported} new record(s) `
+            + `(${r.duplicates} already present, ${r.found} on camera).`;
+        } else {
+          out.className = "cam-sync msg-err";
+          out.textContent = "Sync failed: " + r.error;
+        }
+      } catch (err) {
+        out.className = "cam-sync msg-err";
+        out.textContent = "Sync failed: " + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
     card.querySelector('[data-action="toggle"]').addEventListener("click", async () => {
       await api(`/api/cameras/${cam.id}`, {
         method: "PUT", body: JSON.stringify({ enabled: !cam.enabled }),
