@@ -87,6 +87,7 @@ A virtual "Demo Camera" generates a random plate event every few seconds.
 |--------------------|----------|
 | Event stream       | `GET /cgi-bin/eventManager.cgi?action=attach&codes=[TrafficJunction]&heartbeat=5` |
 | Connection test    | `GET /cgi-bin/magicBox.cgi?action=getDeviceType` |
+| Picture stream     | `GET /cgi-bin/snapManager.cgi?action=attachFileProc&Flags[0]=Event&Events=[...]` |
 | Snapshot fallback  | `GET /cgi-bin/snapshot.cgi?channel=N` |
 | History import     | `GET /cgi-bin/recordFinder.cgi?action=factory.create&name=TrafficSnapEventInfo` (then `startFind`/`doFind`) |
 

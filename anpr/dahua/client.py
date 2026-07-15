@@ -27,6 +27,12 @@ TRAFFIC_RECORD_NAMES = ("TrafficSnapEventInfo", "TrafficSnap", "TrafficRedList")
 
 DEFAULT_EVENT_CODES = "TrafficJunction"
 HEARTBEAT_SECONDS = 5
+# ITC snapshot ("picture") stream variants, tried in order until one attaches.
+SNAP_STREAM_VARIANTS = (
+    "/cgi-bin/snapManager.cgi?action=attachFileProc&Flags[0]=Event&Events=[{codes}]",
+    "/cgi-bin/snapManager.cgi?action=attachFileProc&Flags[0]=Event&Events=[All]&channel={channel}",
+    "/cgi-bin/snapManager.cgi?action=attachFileProc&channel={channel}&Types[0]=all",
+)
 # Read timeout must comfortably exceed the heartbeat interval, otherwise a
 # quiet-but-healthy connection would be treated as dead.
 READ_TIMEOUT = HEARTBEAT_SECONDS * 6
@@ -228,6 +234,41 @@ class DahuaClient:
             "embedded_image_in_event": embedded_image,
             "sample_event": sample_event,
         }
+
+    async def stream_snapshots(
+        self, codes: str = DEFAULT_EVENT_CODES, channel: int = 1
+    ) -> AsyncIterator[bytes]:
+        """Yield jpeg pictures from the ITC snapshot stream.
+
+        Dahua ITC/ANPR cameras deliver the plate/scene picture on a separate
+        ``snapManager.cgi`` stream rather than in the event stream. Tries the
+        known URL variants and streams jpeg parts from the first that attaches.
+        Raises DahuaError if none attach or the connection drops.
+        """
+        codes = codes.strip() or DEFAULT_EVENT_CODES
+        last_error = "no snapManager variant accepted"
+        for template in SNAP_STREAM_VARIANTS:
+            url = self.base_url + template.format(codes=codes, channel=channel)
+            try:
+                async with self._client(read_timeout=READ_TIMEOUT) as client:
+                    async with client.stream("GET", url) as resp:
+                        if resp.status_code != 200:
+                            last_error = f"HTTP {resp.status_code}"
+                            continue
+                        boundary = _boundary_from_content_type(
+                            resp.headers.get("content-type", "")
+                        )
+                        parser = MultipartEventParser(boundary)
+                        async for chunk in resp.aiter_bytes():
+                            for part in parser.feed(chunk):
+                                if part.kind == "image" and part.image:
+                                    yield part.image
+                        # Stream closed cleanly - reconnect via the caller.
+                        raise DahuaError("snapManager stream closed")
+            except httpx.HTTPError as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+                continue
+        raise DahuaError(f"snapshot stream unavailable ({last_error})")
 
     async def stream_events(
         self, codes: str = DEFAULT_EVENT_CODES

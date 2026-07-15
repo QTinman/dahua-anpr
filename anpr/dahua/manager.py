@@ -80,6 +80,16 @@ class CameraWorker:
         cam = self.camera
         client = DahuaClient(cam.host, cam.port, cam.username, cam.password,
                              cam.use_https)
+        # ITC cameras deliver pictures on a separate stream; consume it
+        # concurrently and feed the pictures into the same image matching.
+        snap_task = asyncio.create_task(self._run_snapshots(client))
+        try:
+            await self._run_events(client)
+        finally:
+            snap_task.cancel()
+
+    async def _run_events(self, client: DahuaClient) -> None:
+        cam = self.camera
         subscribed = [c.strip() for c in cam.event_codes.split(",") if c.strip()]
         retry = RETRY_MIN_SECONDS
         while True:
@@ -100,6 +110,29 @@ class CameraWorker:
             except Exception as exc:  # defensive: never let a worker die
                 log.exception("Camera %s worker error", cam.name)
                 await self._set_status("error", f"{type(exc).__name__}: {exc}")
+            await asyncio.sleep(retry)
+            retry = min(retry * 2, RETRY_MAX_SECONDS)
+
+    async def _run_snapshots(self, client: DahuaClient) -> None:
+        """Consume the ITC picture stream, feeding images into matching.
+
+        Best-effort: failures here never change the camera's shown status
+        (that is driven by the event stream); we just retry quietly.
+        """
+        cam = self.camera
+        retry = RETRY_MIN_SECONDS
+        while True:
+            try:
+                async for image in client.stream_snapshots(cam.event_codes,
+                                                           cam.channel):
+                    await self._handle_image(image)
+                retry = RETRY_MIN_SECONDS
+            except asyncio.CancelledError:
+                raise
+            except DahuaError as exc:
+                log.debug("Snapshot stream unavailable for %s: %s", cam.name, exc)
+            except Exception:
+                log.debug("Snapshot stream error for %s", cam.name, exc_info=True)
             await asyncio.sleep(retry)
             retry = min(retry * 2, RETRY_MAX_SECONDS)
 
