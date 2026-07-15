@@ -137,6 +137,7 @@ tests/                 # pytest suite (parser + API)
 | DELETE | `/api/cameras/{id}` | Delete a camera (events are kept) |
 | POST   | `/api/cameras/test` | Test a connection without saving |
 | POST   | `/api/cameras/{id}/sync` | Import the camera's stored ANPR history |
+| POST   | `/api/cameras/{id}/diagnose-stream` | Report how the camera delivers events/pictures |
 | GET    | `/api/diagnostics` | Which database file is in use, plus row counts |
 | GET    | `/api/events` | Search events (`plate`, `camera_id`, `date_from`, `date_to`, `limit`, `offset`) |
 | GET    | `/api/events/{id}/image` | Plate image (jpeg/png) |

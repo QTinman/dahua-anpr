@@ -89,6 +89,31 @@ async def delete_camera(request: Request, camera_id: int):
         raise HTTPException(404, "Camera not found")
 
 
+@router.post("/api/cameras/{camera_id}/diagnose-stream")
+async def diagnose_stream(request: Request, camera_id: int):
+    """Report how the camera delivers events and plate pictures.
+
+    Attaches briefly to the event and ITC snapshot streams and returns counts
+    of events / image parts and a sample event, to determine the correct
+    image source for a given firmware.
+    """
+    state = _state(request)
+    camera = state.db.get_camera(camera_id)
+    if camera is None:
+        raise HTTPException(404, "Camera not found")
+    from .dahua.client import DahuaClient
+
+    client = DahuaClient(camera.host, camera.port, camera.username,
+                         camera.password, camera.use_https)
+    try:
+        report = await client.diagnose_stream(camera.event_codes)
+    except DahuaError as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    return {"ok": True, "report": report}
+
+
 @router.post("/api/cameras/{camera_id}/sync")
 async def sync_history(request: Request, camera_id: int):
     """Import the camera's stored ANPR history into the local database."""

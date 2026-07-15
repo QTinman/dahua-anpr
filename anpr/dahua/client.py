@@ -155,6 +155,72 @@ class DahuaClient:
                 pass
         return records[:max_records]
 
+    async def diagnose_stream(
+        self, codes: str = DEFAULT_EVENT_CODES, seconds: float = 12.0
+    ) -> Dict[str, object]:
+        """Attach briefly to the event and ITC snapshot streams and report what
+        actually arrives. Used to work out how a given camera delivers plate
+        pictures (inline base64, separate jpeg part, or not at all).
+        """
+        codes = codes.strip() or DEFAULT_EVENT_CODES
+        report: Dict[str, object] = {}
+        endpoints = {
+            "eventManager": (
+                f"{self.base_url}/cgi-bin/eventManager.cgi?action=attach"
+                f"&codes=[{codes}]&heartbeat={HEARTBEAT_SECONDS}"
+            ),
+            "snapManager": (
+                f"{self.base_url}/cgi-bin/snapManager.cgi?action=attachFileProc"
+                f"&Flags[0]=Event&Events=[{codes}]"
+            ),
+        }
+        for name, url in endpoints.items():
+            report[name] = await self._diagnose_one(url, seconds)
+        return report
+
+    async def _diagnose_one(self, url: str, seconds: float) -> Dict[str, object]:
+        events = 0
+        images = 0
+        image_sizes = []
+        sample_event = ""
+        embedded_image = False
+        status = "ok"
+        try:
+            async with self._client(read_timeout=seconds + 5) as client:
+                async with client.stream("GET", url) as resp:
+                    if resp.status_code != 200:
+                        return {"status": f"HTTP {resp.status_code}"}
+                    boundary = _boundary_from_content_type(
+                        resp.headers.get("content-type", "")
+                    )
+                    parser = MultipartEventParser(boundary)
+                    loop = asyncio.get_event_loop()
+                    deadline = loop.time() + seconds
+                    async for chunk in resp.aiter_bytes():
+                        for part in parser.feed(chunk):
+                            if part.kind == "event" and part.event:
+                                events += 1
+                                if not sample_event:
+                                    from .parser import extract_image_b64
+                                    data = part.event.get("data") or {}
+                                    embedded_image = extract_image_b64(data) is not None
+                                    sample_event = _truncate_event(part.event)
+                            elif part.kind == "image" and part.image:
+                                images += 1
+                                image_sizes.append(len(part.image))
+                        if loop.time() > deadline:
+                            break
+        except httpx.HTTPError as exc:
+            status = f"error: {exc}"
+        return {
+            "status": status,
+            "events": events,
+            "image_parts": images,
+            "image_sizes": image_sizes[:5],
+            "embedded_image_in_event": embedded_image,
+            "sample_event": sample_event,
+        }
+
     async def stream_events(
         self, codes: str = DEFAULT_EVENT_CODES
     ) -> AsyncIterator[ParsedPart]:
@@ -185,6 +251,28 @@ class DahuaClient:
         except httpx.HTTPError as exc:
             raise DahuaError(f"Event stream error: {exc}") from exc
         raise DahuaError("Event stream closed by camera")
+
+
+def _truncate_event(event: dict, limit: int = 1500) -> str:
+    """Render an event dict compactly for the diagnostic report.
+
+    A base64 image field would swamp the output, so long string values are
+    shortened to their head plus a length marker.
+    """
+    import copy
+
+    def shorten(obj):
+        if isinstance(obj, str):
+            return obj if len(obj) <= 120 else f"{obj[:80]}…(+{len(obj) - 80} chars)"
+        if isinstance(obj, dict):
+            return {k: shorten(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [shorten(v) for v in obj[:20]]
+        return obj
+
+    import json
+    text = json.dumps(shorten(copy.deepcopy(event)), ensure_ascii=False)
+    return text[:limit]
 
 
 def _boundary_from_content_type(content_type: str) -> str:

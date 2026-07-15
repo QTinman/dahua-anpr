@@ -46,6 +46,10 @@ class CameraWorker:
         # Most recent stored event still waiting for its jpeg part.
         self._pending_image_event: Optional[int] = None
         self._pending_image_at: float = 0.0
+        # A jpeg part that arrived before its event (some firmwares send the
+        # picture first), waiting to be attached to the next event.
+        self._buffered_image: Optional[bytes] = None
+        self._buffered_image_at: float = 0.0
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._run(), name=f"camera-{self.camera.id}")
@@ -124,17 +128,26 @@ class CameraWorker:
             received_at=_now_iso(),
             **fields,
         )
-        # Prefer a picture embedded in the event metadata itself.
-        embedded = extract_image_b64(data)
-        if embedded:
-            anpr.image_b64 = embedded
+        now = asyncio.get_event_loop().time()
+        # Picture sources, in order of fidelity:
+        #   1. embedded base64 in the event metadata
+        #   2. a jpeg part that arrived just before this event
+        #   3. (later) a jpeg part that arrives just after this event
+        #   4. (last resort) a live snapshot fallback
+        image_b64 = extract_image_b64(data)
+        if not image_b64 and self._buffered_image is not None \
+                and now - self._buffered_image_at <= IMAGE_MATCH_WINDOW:
+            image_b64 = base64.b64encode(self._buffered_image).decode("ascii")
+            self._buffered_image = None
+        if image_b64:
+            anpr.image_b64 = image_b64
 
         event_id = self.db.add_event(anpr)
-        has_image = embedded is not None
+        has_image = image_b64 is not None
         if not has_image:
-            # No inline picture: wait for a separate jpeg multipart part.
+            # No inline picture yet: wait for a separate jpeg multipart part.
             self._pending_image_event = event_id
-            self._pending_image_at = asyncio.get_event_loop().time()
+            self._pending_image_at = now
 
         payload = anpr.model_dump()
         payload["id"] = event_id
@@ -147,16 +160,22 @@ class CameraWorker:
             asyncio.create_task(self._snapshot_fallback(event_id, client))
 
     async def _handle_image(self, image: bytes) -> None:
-        """A jpeg multipart part: attach it to the most recent event."""
-        event_id = self._pending_image_event
+        """A jpeg multipart part: attach it to its event.
+
+        If an event is waiting for its picture, attach immediately. Otherwise
+        the picture arrived before its event, so buffer it briefly for the
+        next event to pick up.
+        """
         loop_now = asyncio.get_event_loop().time()
-        if event_id is None or loop_now - self._pending_image_at > IMAGE_MATCH_WINDOW:
+        event_id = self._pending_image_event
+        if event_id is not None and loop_now - self._pending_image_at <= IMAGE_MATCH_WINDOW:
+            self._pending_image_event = None
+            self._store_image(event_id, image)
+            await self.hub.broadcast({"type": "event_image", "event_id": event_id})
             return
-        self._pending_image_event = None
-        self._store_image(event_id, image)
-        await self.hub.broadcast({
-            "type": "event_image", "event_id": event_id,
-        })
+        # No event waiting - hold the picture for the next event.
+        self._buffered_image = image
+        self._buffered_image_at = loop_now
 
     async def _snapshot_fallback(self, event_id: int, client: DahuaClient) -> None:
         """If no embedded image arrived shortly after the event, pull one."""
