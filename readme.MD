@@ -24,6 +24,12 @@ every capture in SQLite and pushes it live to the browser over a WebSocket.
   event carries no picture at all does the server fetch a live snapshot
   (`snapshot.cgi`) as a fallback — toggled per camera by *Snapshot fallback*.
 - **SQLite persistence** — every event is stored for historical queries.
+- **ONVIF metadata (RTSP) mode** — optionally source events from the ONVIF
+  metadata stream, so each plate arrives with its **own capture image and
+  plate cutout from the same frame**. This is the most reliable image match
+  for ITC/ANPR cameras (the source the original Milestone app used) and avoids
+  the plate/image mismatch that time-based matching across HTTP streams can
+  cause. Enable per camera with "ONVIF metadata (RTSP)".
 - **History sync** — import the camera's own stored ANPR log (Dahua
   `RecordFinder`) so the monitor's history matches the camera's, filling any
   gaps from before the monitor was connected. Duplicates are skipped.
@@ -88,6 +94,7 @@ A virtual "Demo Camera" generates a random plate event every few seconds.
 | Event stream       | `GET /cgi-bin/eventManager.cgi?action=attach&codes=[TrafficJunction]&heartbeat=5` |
 | Connection test    | `GET /cgi-bin/magicBox.cgi?action=getDeviceType` |
 | Picture stream     | `GET /cgi-bin/snapManager.cgi?action=attachFileProc&Flags[0]=Event&Events=[...]` |
+| ONVIF metadata     | RTSP `DESCRIBE`/`SETUP`/`PLAY` on `rtsp://host:554/cam/realmonitor?channel=N&subtype=0` (metadata track) |
 | Snapshot fallback  | `GET /cgi-bin/snapshot.cgi?channel=N` |
 | History import     | `GET /cgi-bin/recordFinder.cgi?action=factory.create&name=TrafficSnapEventInfo` (then `startFind`/`doFind`) |
 

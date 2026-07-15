@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS cameras (
     channel INTEGER NOT NULL DEFAULT 1,
     event_codes TEXT NOT NULL DEFAULT 'TrafficJunction',
     snapshot_on_event INTEGER NOT NULL DEFAULT 1,
+    use_onvif INTEGER NOT NULL DEFAULT 0,
+    rtsp_port INTEGER NOT NULL DEFAULT 554,
     enabled INTEGER NOT NULL DEFAULT 1
 );
 
@@ -73,7 +75,22 @@ class Database:
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a database was first created."""
+        existing = {row["name"] for row in
+                    self._conn.execute("PRAGMA table_info(cameras)")}
+        additions = {
+            "use_onvif": "INTEGER NOT NULL DEFAULT 0",
+            "rtsp_port": "INTEGER NOT NULL DEFAULT 554",
+            "snapshot_on_event": "INTEGER NOT NULL DEFAULT 1",
+            "event_codes": "TEXT NOT NULL DEFAULT 'TrafficJunction'",
+        }
+        for column, ddl in additions.items():
+            if column not in existing:
+                self._conn.execute(f"ALTER TABLE cameras ADD COLUMN {column} {ddl}")
 
     def close(self) -> None:
         with self._lock:
@@ -104,12 +121,13 @@ class Database:
             cur = self._conn.execute(
                 """INSERT INTO cameras
                    (name, host, port, username, password, use_https, channel,
-                    event_codes, snapshot_on_event, enabled)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    event_codes, snapshot_on_event, use_onvif, rtsp_port, enabled)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     cam.name, cam.host, cam.port, cam.username, cam.password,
                     int(cam.use_https), cam.channel, cam.event_codes,
-                    int(cam.snapshot_on_event), int(cam.enabled),
+                    int(cam.snapshot_on_event), int(cam.use_onvif),
+                    cam.rtsp_port, int(cam.enabled),
                 ),
             )
             self._conn.commit()
@@ -121,7 +139,8 @@ class Database:
             return self.get_camera(camera_id)
         allowed = {
             "name", "host", "port", "username", "password", "use_https",
-            "channel", "event_codes", "snapshot_on_event", "enabled",
+            "channel", "event_codes", "snapshot_on_event", "use_onvif",
+            "rtsp_port", "enabled",
         }
         sets, values = [], []
         for key, value in fields.items():
@@ -160,6 +179,8 @@ class Database:
             channel=row["channel"],
             event_codes=row["event_codes"],
             snapshot_on_event=bool(row["snapshot_on_event"]),
+            use_onvif=bool(row["use_onvif"]),
+            rtsp_port=row["rtsp_port"],
             enabled=bool(row["enabled"]),
         )
 

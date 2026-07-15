@@ -374,7 +374,9 @@ async function loadCameras() {
       </div>
       <div class="cam-meta">${cam.use_https ? "https" : "http"}://${esc(cam.host)}:${cam.port}
         · ch ${cam.channel} · ${esc(cam.username)}</div>
-      <div class="cam-meta">Events: ${esc(cam.event_codes)}</div>
+      <div class="cam-meta">${cam.use_onvif
+        ? "Source: ONVIF metadata (RTSP :" + cam.rtsp_port + ")"
+        : "Events: " + esc(cam.event_codes)}</div>
       <div class="cam-detail">${esc(detail || "")}</div>
       <div class="cam-actions">
         <button class="btn small" data-action="edit">Edit</button>
@@ -437,6 +439,8 @@ function openCameraDialog(cam = null) {
   $("#cam-codes").value = cam?.event_codes || "TrafficJunction";
   $("#cam-https").checked = cam?.use_https || false;
   $("#cam-snapshot").checked = cam ? cam.snapshot_on_event : true;
+  $("#cam-onvif").checked = cam ? cam.use_onvif : false;
+  $("#cam-rtsp-port").value = cam?.rtsp_port ?? 554;
   $("#cam-enabled").checked = cam ? cam.enabled : true;
   $("#cam-test-result").textContent = "";
   $("#camera-dialog").showModal();
@@ -487,6 +491,8 @@ $("#camera-form").addEventListener("submit", async (e) => {
     event_codes: $("#cam-codes").value.trim() || "TrafficJunction",
     use_https: $("#cam-https").checked,
     snapshot_on_event: $("#cam-snapshot").checked,
+    use_onvif: $("#cam-onvif").checked,
+    rtsp_port: parseInt($("#cam-rtsp-port").value, 10) || 554,
     enabled: $("#cam-enabled").checked,
   };
   try {

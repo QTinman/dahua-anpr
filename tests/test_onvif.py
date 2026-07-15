@@ -36,9 +36,10 @@ def test_parse_onvif_plate_and_images():
     assert o["vehicle_brand"] == "Audi"
     assert o["vehicle_color"] == "Gray"
     assert o["speed"] == 42.0
-    # plate cutout is preferred for the thumbnail
-    assert o["image_b64"] == "/9j/PLATE"
+    # the full scene/vehicle image is used as the capture picture
+    assert o["image_b64"] == "/9j/VEHICLE"
     assert o["vehicle_image_b64"] == "/9j/VEHICLE"
+    assert o["plate_image_b64"] == "/9j/PLATE"
 
 
 def test_parse_onvif_skips_empty_frames():

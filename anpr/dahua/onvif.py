@@ -105,9 +105,10 @@ def parse_onvif_metadata(xml_text: str) -> List[Dict[str, Any]]:
                 "vehicle_color": _text(vinfo, f"{TT}Color"),
                 "vehicle_size": _text(vinfo, f"{TT}Size"),
                 "speed": _as_float(_text(vinfo, f"{TT}Speed")),
-                # Prefer the plate cutout for the thumbnail, fall back to the
-                # full vehicle image.
-                "image_b64": plate_image or vehicle_image or None,
+                # Use the full scene/vehicle image as the capture picture (it
+                # shows the vehicle with its plate, matching the camera UI);
+                # fall back to the plate cutout if that is all there is.
+                "image_b64": vehicle_image or plate_image or None,
                 "vehicle_image_b64": vehicle_image or None,
                 "plate_image_b64": plate_image or None,
             })

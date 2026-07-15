@@ -29,6 +29,15 @@ RETRY_MIN_SECONDS = 5
 RETRY_MAX_SECONDS = 60
 # How long after a text event a jpeg part is still considered "its" image.
 IMAGE_MATCH_WINDOW = 3.0
+# Ignore repeat ONVIF frames of the same tracked object within this window.
+ONVIF_DEDUP_SECONDS = 8.0
+
+
+def _prune_seen(seen: Dict[str, float], now: float) -> None:
+    """Drop de-dup keys older than the window to bound memory."""
+    stale = [k for k, t in seen.items() if now - t > ONVIF_DEDUP_SECONDS * 2]
+    for key in stale:
+        seen.pop(key, None)
 
 
 def _now_iso() -> str:
@@ -78,6 +87,11 @@ class CameraWorker:
 
     async def _run(self) -> None:
         cam = self.camera
+        if cam.use_onvif:
+            # ONVIF metadata (RTSP) carries the plate and its own capture image
+            # in the same frame - no cross-stream matching needed.
+            await self._run_onvif()
+            return
         client = DahuaClient(cam.host, cam.port, cam.username, cam.password,
                              cam.use_https)
         # ITC cameras deliver pictures on a separate stream; consume it
@@ -87,6 +101,68 @@ class CameraWorker:
             await self._run_events(client)
         finally:
             snap_task.cancel()
+
+    async def _run_onvif(self) -> None:
+        """Consume the ONVIF metadata stream as the source of events+images."""
+        from .onvif import normalize_onvif_object, parse_onvif_metadata
+        from .rtsp import RtspError, RtspMetadataClient
+
+        cam = self.camera
+        rtsp = RtspMetadataClient(cam.host, cam.rtsp_port, cam.username,
+                                  cam.password, cam.channel)
+        retry = RETRY_MIN_SECONDS
+        # object_id -> loop time, to avoid emitting the same capture repeatedly
+        # as the camera keeps sending the tracked object's frames.
+        seen: Dict[str, float] = {}
+        while True:
+            await self._set_status("connecting")
+            try:
+                async for xml in rtsp.stream_metadata():
+                    if self.status != "connected":
+                        retry = RETRY_MIN_SECONDS
+                        await self._set_status("connected")
+                    now = asyncio.get_event_loop().time()
+                    for obj in parse_onvif_metadata(xml):
+                        await self._maybe_emit_onvif(obj, seen, now,
+                                                     normalize_onvif_object)
+                    _prune_seen(seen, now)
+            except asyncio.CancelledError:
+                raise
+            except RtspError as exc:
+                await self._set_status("error", str(exc))
+            except Exception as exc:  # defensive: never let a worker die
+                log.exception("Camera %s ONVIF worker error", cam.name)
+                await self._set_status("error", f"{type(exc).__name__}: {exc}")
+            await asyncio.sleep(retry)
+            retry = min(retry * 2, RETRY_MAX_SECONDS)
+
+    async def _maybe_emit_onvif(self, obj: dict, seen: Dict[str, float],
+                                now: float, normalize) -> None:
+        # A capture frame is one that carries a picture (or a plate). Plain
+        # tracking frames without either are ignored.
+        if not obj.get("image_b64") and not obj.get("plate"):
+            return
+        # De-duplicate by object id within a short window; a fresh plate for
+        # the same id is treated as a new capture.
+        key = f"{obj.get('object_id', '')}:{obj.get('plate', '')}"
+        if key in seen and now - seen[key] < ONVIF_DEDUP_SECONDS:
+            return
+        seen[key] = now
+
+        fields = normalize(obj)
+        anpr = AnprEvent(
+            camera_id=self.camera.id,
+            camera_name=self.camera.name,
+            received_at=fields["event_time"] or _now_iso(),
+            image_b64=obj.get("image_b64"),
+            **fields,
+        )
+        event_id = self.db.add_event(anpr)
+        payload = anpr.model_dump()
+        payload["id"] = event_id
+        payload["has_image"] = anpr.image_b64 is not None
+        payload.pop("image_b64", None)
+        await self.hub.broadcast({"type": "anpr_event", "event": payload})
 
     async def _run_events(self, client: DahuaClient) -> None:
         cam = self.camera

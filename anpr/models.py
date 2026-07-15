@@ -17,6 +17,11 @@ class CameraBase(BaseModel):
     event_codes: str = "TrafficJunction"
     # Fetch a snapshot from the camera when an event has no embedded image.
     snapshot_on_event: bool = True
+    # Use the ONVIF metadata stream (RTSP) as the source of events + images.
+    # This pairs each plate with its own capture image (and plate cutout) from
+    # the same frame, instead of matching images to events across streams.
+    use_onvif: bool = False
+    rtsp_port: int = Field(default=554, ge=1, le=65535)
     enabled: bool = True
 
 
@@ -35,6 +40,8 @@ class CameraUpdate(BaseModel):
     channel: Optional[int] = Field(default=None, ge=1)
     event_codes: Optional[str] = None
     snapshot_on_event: Optional[bool] = None
+    use_onvif: Optional[bool] = None
+    rtsp_port: Optional[int] = Field(default=None, ge=1, le=65535)
     enabled: Optional[bool] = None
 
 
@@ -54,6 +61,8 @@ class CameraPublic(BaseModel):
     channel: int
     event_codes: str
     snapshot_on_event: bool
+    use_onvif: bool
+    rtsp_port: int
     enabled: bool
     status: str = "disabled"
     status_detail: str = ""
@@ -70,6 +79,8 @@ class CameraPublic(BaseModel):
             channel=cam.channel,
             event_codes=cam.event_codes,
             snapshot_on_event=cam.snapshot_on_event,
+            use_onvif=cam.use_onvif,
+            rtsp_port=cam.rtsp_port,
             enabled=cam.enabled,
             status=status,
             status_detail=detail,
