@@ -312,6 +312,23 @@ class Database:
             ).fetchall()
         return {r["day"]: r["n"] for r in rows}
 
+    def purge_old_images(self, cutoff: str) -> int:
+        """Clear image data for events older than the cutoff (keep the row)."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE events SET image_b64 = NULL "
+                "WHERE image_b64 IS NOT NULL AND received_at < ?", (cutoff,))
+            self._conn.commit()
+        return cur.rowcount
+
+    def purge_old_events(self, cutoff: str) -> int:
+        """Delete events older than the cutoff entirely."""
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM events WHERE received_at < ?", (cutoff,))
+            self._conn.commit()
+        return cur.rowcount
+
     def get_event_image(self, event_id: int) -> Optional[str]:
         with self._lock:
             row = self._conn.execute(

@@ -125,6 +125,16 @@ class ReportSettings(BaseModel):
     directory: str = "reports"
 
 
+class RetentionSettings(BaseModel):
+    """Auto-delete of old snapshots to bound database growth."""
+
+    enabled: bool = False
+    days: int = Field(default=30, ge=1, le=3650)
+    # False: clear only the image (keep the searchable record); True: delete
+    # the whole event row.
+    delete_records: bool = False
+
+
 class WhitelistCreate(BaseModel):
     plate: str = Field(min_length=1, max_length=32)
     label: str = Field(default="", max_length=100)

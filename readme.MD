@@ -44,6 +44,9 @@ every capture in SQLite and pushes it live to the browser over a WebSocket.
   whitelisted plate is seen, and/or email an alert when a plate is *not*
   whitelisted. Gate CGI paths are configurable, with Test buttons for both.
   An **access log** records every gate opening and email alert (live-updated).
+- **Snapshot retention** — optionally auto-delete snapshots older than N days
+  (clear just the image, or the whole record), run hourly, to bound database
+  growth.
 - **Scheduled reports** — daily CSV report at a configurable time/directory,
   plus on-demand generation.
 - **Camera management UI** — add/edit/delete cameras (IP, port, credentials,
@@ -166,6 +169,8 @@ tests/                 # pytest suite (parser + API)
 | POST   | `/api/access/test-gate` | Fire a camera's gate output now (`camera_id`) |
 | POST   | `/api/access/test-email` | Send a test alert email |
 | GET    | `/api/access/log` | Recent gate-open / email-alert actions |
+| GET/PUT| `/api/settings/retention` | Snapshot retention configuration |
+| POST   | `/api/retention/run` | Run the retention cleanup now |
 | GET/PUT| `/api/settings/report` | Daily report configuration |
 | POST   | `/api/reports/run` | Generate a report now |
 | WS     | `/ws` | Live events + camera status push |

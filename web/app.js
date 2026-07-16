@@ -49,7 +49,9 @@ document.querySelectorAll(".tab").forEach((btn) => {
     if (btn.dataset.tab === "search") populateCameraFilter();
     if (btn.dataset.tab === "playback") initPlayback();
     if (btn.dataset.tab === "whitelist") loadWhitelist();
-    if (btn.dataset.tab === "reports") { loadAccessSettings(); loadAccessLog(); }
+    if (btn.dataset.tab === "reports") {
+      loadAccessSettings(); loadAccessLog(); loadRetentionSettings();
+    }
   });
 });
 
@@ -184,9 +186,15 @@ function onEventImage(eventId) {
 
 let currentDetailId = null;
 
+let currentDetailPlate = "";
+
 function showDetail(ev) {
   currentDetailId = ev.id;
+  currentDetailPlate = ev.plate || "";
   $("#detail-plate").textContent = ev.plate || "?";
+  const wlBtn = $("#detail-whitelist");
+  wlBtn.disabled = !currentDetailPlate;
+  $("#detail-wl-msg").textContent = "";
   const fields = {
     Time: fmtTime(ev.received_at),
     Camera: ev.camera_name,
@@ -223,6 +231,23 @@ function loadDetailImage(eventId) {
 $("#live-clear").addEventListener("click", () => {
   $("#live-body").innerHTML =
     '<tr class="empty-row"><td colspan="11">Waiting for events…</td></tr>';
+});
+
+$("#detail-whitelist").addEventListener("click", async () => {
+  if (!currentDetailPlate) return;
+  const msg = $("#detail-wl-msg");
+  msg.textContent = "";
+  try {
+    await api("/api/whitelist", {
+      method: "POST",
+      body: JSON.stringify({ plate: currentDetailPlate, label: "" }),
+    });
+    msg.textContent = `✓ ${currentDetailPlate} whitelisted`;
+    msg.className = "muted msg-ok";
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = "muted msg-err";
+  }
 });
 
 // Double-click the latest-capture image to view it full size.
@@ -553,6 +578,52 @@ $("#report-form").addEventListener("submit", async (e) => {
     msg.textContent = err.message;
     msg.className = "msg-err";
   }
+});
+
+/* ------------------------------------------------------------- retention */
+
+async function loadRetentionSettings() {
+  try {
+    const s = await api("/api/settings/retention");
+    $("#ret-enabled").checked = s.enabled;
+    $("#ret-days").value = s.days;
+    $("#ret-delete-records").checked = s.delete_records;
+  } catch (_) {}
+}
+
+$("#retention-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#ret-msg");
+  try {
+    await api("/api/settings/retention", {
+      method: "PUT",
+      body: JSON.stringify({
+        enabled: $("#ret-enabled").checked,
+        days: parseInt($("#ret-days").value, 10) || 30,
+        delete_records: $("#ret-delete-records").checked,
+      }),
+    });
+    msg.textContent = "Saved."; msg.className = "msg-ok";
+  } catch (err) { msg.textContent = err.message; msg.className = "msg-err"; }
+});
+
+$("#ret-run").addEventListener("click", async () => {
+  const msg = $("#ret-msg");
+  msg.textContent = "Cleaning…"; msg.className = "muted";
+  try {
+    // Save current settings first so the run uses them.
+    await api("/api/settings/retention", {
+      method: "PUT",
+      body: JSON.stringify({
+        enabled: $("#ret-enabled").checked,
+        days: parseInt($("#ret-days").value, 10) || 30,
+        delete_records: $("#ret-delete-records").checked,
+      }),
+    });
+    const r = await api("/api/retention/run", { method: "POST" });
+    msg.textContent = `Removed ${r.purged} old snapshot(s).`;
+    msg.className = "msg-ok";
+  } catch (err) { msg.textContent = err.message; msg.className = "msg-err"; }
 });
 
 $("#report-run").addEventListener("click", async () => {

@@ -162,6 +162,39 @@ def test_access_settings_roundtrip_keeps_password(client):
     assert client.app.state.access.get_settings().smtp_password == "secret"
 
 
+def test_retention_purge(client):
+    import base64
+
+    from anpr.models import AnprEvent
+
+    db = client.app.state.db
+    jpeg = base64.b64encode(b"\xff\xd8\xff\xe0abc").decode()
+    old = db.add_event(AnprEvent(camera_id=1, plate="OLD001",
+                                 received_at="2020-01-01T10:00:00+00:00",
+                                 image_b64=jpeg))
+    new = db.add_event(AnprEvent(camera_id=1, plate="NEW001",
+                                 received_at="2999-01-01T10:00:00+00:00",
+                                 image_b64=jpeg))
+    # clear-image mode
+    cleared = db.purge_old_images("2025-01-01T00:00:00+00:00")
+    assert cleared == 1
+    assert db.get_event_image(old) is None
+    assert db.get_event_image(new) is not None
+    # delete-record mode
+    deleted = db.purge_old_events("2025-01-01T00:00:00+00:00")
+    assert deleted == 1
+    assert db.search_events(plate="OLD001")["total"] == 0
+    assert db.search_events(plate="NEW001")["total"] == 1
+
+
+def test_retention_settings_api(client):
+    resp = client.put("/api/settings/retention",
+                      json={"enabled": True, "days": 7, "delete_records": False})
+    assert resp.status_code == 200
+    assert client.get("/api/settings/retention").json()["days"] == 7
+    assert client.post("/api/retention/run").json()["ok"] is True
+
+
 def test_diagnostics(client):
     resp = client.get("/api/diagnostics")
     data = resp.json()

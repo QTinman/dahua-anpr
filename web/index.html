@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dahua ANPR Monitor</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%234c9aff'/%3E%3Ctext x='8' y='12' font-size='10' text-anchor='middle' fill='white' font-family='monospace' font-weight='bold'%3EP%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/style.css?v=13">
+<link rel="stylesheet" href="/static/style.css?v=14">
 </head>
 <body>
 <header>
@@ -51,6 +51,10 @@
         <h3>Latest capture</h3>
         <div id="detail-image" class="plate-image empty">no image</div>
         <div id="detail-plate" class="detail-plate">—</div>
+        <div class="detail-actions">
+          <button id="detail-whitelist" class="btn small" disabled>★ Add to whitelist</button>
+          <span id="detail-wl-msg" class="muted"></span>
+        </div>
         <dl id="detail-fields"></dl>
       </aside>
     </div>
@@ -242,6 +246,23 @@
       </div>
     </div>
 
+    <div class="panel" style="max-width:680px;margin-bottom:16px">
+      <h2>Snapshot retention</h2>
+      <p class="muted">Automatically remove old snapshots to keep the database
+        from growing without limit. Runs hourly.</p>
+      <form id="retention-form" class="form-grid">
+        <label><input type="checkbox" id="ret-enabled"> Enabled</label>
+        <label>Keep for (days) <input type="number" id="ret-days" value="30" min="1" max="3650"></label>
+        <label style="grid-column:1/-1"><input type="checkbox" id="ret-delete-records">
+          Delete the whole record (default: keep the record, remove only its image)</label>
+        <div class="form-actions">
+          <button type="submit" class="btn primary">Save</button>
+          <button type="button" id="ret-run" class="btn">Clean up now</button>
+          <span id="ret-msg" class="muted"></span>
+        </div>
+      </form>
+    </div>
+
     <div class="panel">
       <h2>Scheduled daily report</h2>
       <p class="muted">Writes a CSV file with all of the day's captures to the
@@ -310,6 +331,6 @@
   <button class="btn" id="image-dialog-close">Close</button>
 </dialog>
 
-<script src="/static/app.js?v=13"></script>
+<script src="/static/app.js?v=14"></script>
 </body>
 </html>

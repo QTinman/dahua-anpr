@@ -20,7 +20,7 @@ from .access import AccessController
 from .api import router
 from .database import Database
 from .dahua.manager import CameraManager
-from .reports import ReportScheduler
+from .reports import ReportScheduler, RetentionCleaner
 from .ws import WebSocketHub
 
 logging.basicConfig(
@@ -46,16 +46,19 @@ async def lifespan(app: FastAPI):
     access = AccessController(db, hub)
     manager = CameraManager(db, hub, access)
     reports = ReportScheduler(db)
+    retention = RetentionCleaner(db)
 
     app.state.db = db
     app.state.hub = hub
     app.state.manager = manager
     app.state.reports = reports
+    app.state.retention = retention
     app.state.access = access
     app.state.simulator = None
 
     await manager.start_all()
     reports.start()
+    retention.start()
 
     if os.environ.get("ANPR_DEMO") == "1":
         from .simulator import DemoSimulator
@@ -68,6 +71,7 @@ async def lifespan(app: FastAPI):
     if app.state.simulator:
         await app.state.simulator.stop()
     await reports.stop()
+    await retention.stop()
     await manager.stop_all()
     db.close()
 

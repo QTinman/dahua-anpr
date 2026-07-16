@@ -191,6 +191,7 @@ tr.flash { animation: rowflash 1.2s ease-out; }
   padding: 6px;
   margin-bottom: 14px;
 }
+.detail-actions { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
 dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 13px; }
 dt { color: var(--muted); }
 dd { margin: 0; }

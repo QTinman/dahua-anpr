@@ -4,11 +4,11 @@ import asyncio
 import csv
 import logging
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from .database import Database
-from .models import ReportSettings
+from .models import ReportSettings, RetentionSettings
 
 log = logging.getLogger("anpr.reports")
 
@@ -84,3 +84,58 @@ class ReportScheduler:
             return
         write_report(self.db, settings.directory, now.date())
         self.db.set_setting("last_report_date", today)
+
+
+class RetentionCleaner:
+    """Periodically deletes snapshots older than the configured retention."""
+
+    SETTINGS_KEY = "retention_settings"
+
+    def __init__(self, db: Database):
+        self.db = db
+        self._task: Optional[asyncio.Task] = None
+
+    def get_settings(self) -> RetentionSettings:
+        raw = self.db.get_setting(self.SETTINGS_KEY)
+        return RetentionSettings(**raw) if raw else RetentionSettings()
+
+    def set_settings(self, settings: RetentionSettings) -> None:
+        self.db.set_setting(self.SETTINGS_KEY, settings.model_dump())
+
+    def start(self) -> None:
+        self._task = asyncio.create_task(self._run(), name="retention-cleaner")
+
+    async def stop(self) -> None:
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+
+    async def _run(self) -> None:
+        while True:
+            try:
+                self.run_now()
+            except Exception:
+                log.exception("Retention cleanup failed")
+            await asyncio.sleep(3600)  # hourly
+
+    def run_now(self) -> int:
+        settings = self.get_settings()
+        if not settings.enabled or settings.days <= 0:
+            return 0
+        cutoff = (datetime.now().astimezone()
+                  - timedelta(days=settings.days)).isoformat(timespec="seconds")
+        if settings.delete_records:
+            purged = self.db.purge_old_events(cutoff)
+            if purged:
+                log.info("Retention: deleted %d event(s) older than %d days",
+                         purged, settings.days)
+        else:
+            purged = self.db.purge_old_images(cutoff)
+            if purged:
+                log.info("Retention: cleared %d snapshot(s) older than %d days",
+                         purged, settings.days)
+        return purged

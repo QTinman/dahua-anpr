@@ -17,6 +17,7 @@ from .models import (
     CameraPublic,
     CameraUpdate,
     ReportSettings,
+    RetentionSettings,
     TestConnectionRequest,
     WhitelistCreate,
 )
@@ -367,6 +368,23 @@ async def get_report_settings(request: Request):
 async def set_report_settings(request: Request, body: ReportSettings):
     _state(request).reports.set_settings(body)
     return body
+
+
+@router.get("/api/settings/retention")
+async def get_retention_settings(request: Request):
+    return _state(request).retention.get_settings()
+
+
+@router.put("/api/settings/retention")
+async def set_retention_settings(request: Request, body: RetentionSettings):
+    _state(request).retention.set_settings(body)
+    return body
+
+
+@router.post("/api/retention/run")
+async def run_retention_now(request: Request):
+    purged = _state(request).retention.run_now()
+    return {"ok": True, "purged": purged}
 
 
 @router.post("/api/reports/run")
