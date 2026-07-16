@@ -12,12 +12,13 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
-from ..database import Database
+from ..database import Database, normalize_plate
 from ..models import AnprEvent, Camera
 from ..ws import WebSocketHub
 from .client import DahuaClient, DahuaError
 from .onvif import direction_from_boxes
 from .parser import (
+    extract_direction,
     extract_image_b64,
     is_traffic_code,
     normalize_traffic_event,
@@ -34,6 +35,10 @@ IMAGE_MATCH_WINDOW = 3.0
 # and attributes in another). Merge frames per object and emit once the object
 # has been gone this long, or as soon as its capture image arrives.
 ONVIF_FLUSH_SECONDS = 2.5
+# How long a plate's direction (from the HTTP event stream) stays valid, and
+# the window for the time-based fallback when the plate hasn't been buffered.
+DIRECTION_PLATE_TTL = 60.0
+DIRECTION_RECENT_WINDOW = 5.0
 # Fields merged across an object's frames (first non-empty value wins).
 ONVIF_MERGE_FIELDS = (
     "plate", "plate_type", "country", "plate_color", "vehicle_type",
@@ -93,6 +98,10 @@ class CameraWorker:
         # picture first), waiting to be attached to the next event.
         self._buffered_image: Optional[bytes] = None
         self._buffered_image_at: float = 0.0
+        # Capture direction from the HTTP event stream (ONVIF omits it):
+        # normalised plate -> (direction, loop time), plus a time-based fallback.
+        self._dir_by_plate: Dict[str, tuple] = {}
+        self._last_direction: tuple = ("", 0.0)
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._run(), name=f"camera-{self.camera.id}")
@@ -123,8 +132,16 @@ class CameraWorker:
         cam = self.camera
         if cam.use_onvif:
             # ONVIF metadata (RTSP) carries the plate and its own capture image
-            # in the same frame - no cross-stream matching needed.
-            await self._run_onvif()
+            # in the same frame - no cross-stream matching needed. ONVIF omits
+            # the capture direction, so also consume the HTTP event stream to
+            # learn each plate's direction and attach it to the ONVIF capture.
+            http = DahuaClient(cam.host, cam.port, cam.username, cam.password,
+                               cam.use_https)
+            dir_task = asyncio.create_task(self._run_event_directions(http))
+            try:
+                await self._run_onvif()
+            finally:
+                dir_task.cancel()
             return
         client = DahuaClient(cam.host, cam.port, cam.username, cam.password,
                              cam.use_https)
@@ -173,6 +190,64 @@ class CameraWorker:
             await asyncio.sleep(retry)
             retry = min(retry * 2, RETRY_MAX_SECONDS)
 
+    async def _run_event_directions(self, client: DahuaClient) -> None:
+        """Consume the HTTP event stream to learn each plate's capture
+        direction (ONVIF does not carry it). Best-effort: failures never affect
+        the camera's shown status."""
+        cam = self.camera
+        retry = RETRY_MIN_SECONDS
+        while True:
+            try:
+                async for part in client.stream_events(cam.event_codes):
+                    if part.kind != "event" or not part.event:
+                        continue
+                    data = part.event.get("data") or {}
+                    direction = extract_direction(data)
+                    if not direction:
+                        continue
+                    now = asyncio.get_event_loop().time()
+                    self._last_direction = (direction, now)
+                    car = data.get("TrafficCar") if isinstance(
+                        data.get("TrafficCar"), dict) else {}
+                    obj = data.get("Object") if isinstance(
+                        data.get("Object"), dict) else {}
+                    plate = car.get("PlateNumber") or obj.get("Text") or ""
+                    norm = normalize_plate(plate)
+                    if norm:
+                        self._dir_by_plate[norm] = (direction, now)
+                        self._prune_directions(now)
+                retry = RETRY_MIN_SECONDS
+            except asyncio.CancelledError:
+                raise
+            except DahuaError as exc:
+                log.debug("Event-direction stream for %s: %s", cam.name, exc)
+            except Exception:
+                log.debug("Event-direction error for %s", cam.name, exc_info=True)
+            await asyncio.sleep(retry)
+            retry = min(retry * 2, RETRY_MAX_SECONDS)
+
+    def _prune_directions(self, now: float) -> None:
+        stale = [p for p, (_, t) in self._dir_by_plate.items()
+                 if now - t > DIRECTION_PLATE_TTL]
+        for plate in stale:
+            self._dir_by_plate.pop(plate, None)
+
+    def _resolve_direction(self, current: str, plate: str) -> str:
+        # A fixed per-camera direction always wins.
+        if self.camera.direction_mode:
+            return self.camera.direction_mode
+        if current:
+            return current
+        now = asyncio.get_event_loop().time()
+        hit = self._dir_by_plate.get(normalize_plate(plate))
+        if hit and now - hit[1] <= DIRECTION_PLATE_TTL:
+            return hit[0]
+        # Fallback: the most recent direction seen, if it is fresh.
+        if self._last_direction[0] and \
+                now - self._last_direction[1] <= DIRECTION_RECENT_WINDOW:
+            return self._last_direction[0]
+        return current
+
     def _accumulate_onvif(self, obj: dict, pending: Dict[str, dict],
                           now: float) -> list:
         """Merge an object's frame; emit the record once its image arrives."""
@@ -205,9 +280,10 @@ class CameraWorker:
 
     async def _store_onvif(self, data: dict, normalize) -> None:
         fields = normalize(data)
-        # A camera watching a fixed lane can force the direction.
-        if self.camera.direction_mode:
-            fields["direction"] = self.camera.direction_mode
+        # Direction: fixed override, else the value from metadata/movement, else
+        # the capture direction learned for this plate from the event stream.
+        fields["direction"] = self._resolve_direction(
+            fields.get("direction", ""), data.get("plate", ""))
         anpr = AnprEvent(
             camera_id=self.camera.id,
             camera_name=self.camera.name,

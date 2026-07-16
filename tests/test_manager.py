@@ -23,6 +23,26 @@ def test_accumulator_infers_direction_from_boxes():
     assert out[0]["direction"] == "Approaching"
 
 
+def test_resolve_direction_by_plate():
+    import asyncio
+    worker = CameraWorker(Camera(id=1, name="c", host="h"), db=None, hub=None)
+    now = asyncio.get_event_loop().time()
+    worker._dir_by_plate["ABC123"] = ("Departing", now)
+    # ONVIF capture has no direction; resolved from the plate's event direction
+    assert worker._resolve_direction("", "ABC 123") == "Departing"
+    # a fixed camera direction still wins
+    worker.camera.direction_mode = "Approaching"
+    assert worker._resolve_direction("", "ABC123") == "Approaching"
+
+
+def test_resolve_direction_recent_fallback():
+    import asyncio
+    worker = CameraWorker(Camera(id=1, name="c", host="h"), db=None, hub=None)
+    worker._last_direction = ("Approaching", asyncio.get_event_loop().time())
+    # unknown plate, but a fresh "last direction" is used as fallback
+    assert worker._resolve_direction("", "ZZZ999") == "Approaching"
+
+
 def test_accumulator_keeps_camera_direction_if_present():
     worker = CameraWorker(Camera(id=1, name="c", host="h"), db=None, hub=None)
     pending = {}

@@ -22,7 +22,7 @@ TRAFFIC_JSON = {
         "VehicleSign": "Volvo",
         "Speed": 63,
         "Lane": 2,
-        "Direction": "1",
+        "DrivingDirection": ["Approach", "", ""],
     },
 }
 
@@ -117,6 +117,30 @@ def test_normalize_traffic_event_top_level_fields():
     assert fields["plate"] == "XYZ789"
     assert fields["vehicle_color"] == "Red"
     assert fields["speed"] == 45.5
+
+
+def test_extract_direction_driving_direction():
+    from anpr.dahua.parser import extract_direction
+    assert extract_direction(
+        {"TrafficCar": {"DrivingDirection": ["Approach", "", ""]}}) == "Approaching"
+    assert extract_direction(
+        {"TrafficCar": {"DrivingDirection": ["Leave"]}}) == "Departing"
+    assert extract_direction(
+        {"TrafficCar": {"DrivingDirection": "Approach"}}) == "Approaching"
+
+
+def test_extract_direction_vehicle_fallback():
+    from anpr.dahua.parser import extract_direction
+    # no DrivingDirection -> fall back to Vehicle.VehicleDirection Head/Tail
+    assert extract_direction({"Vehicle": {"VehicleDirection": "Head"}}) == "Approaching"
+    assert extract_direction({"Vehicle": {"VehicleDirection": "Tail"}}) == "Departing"
+    assert extract_direction({"VehicleDirection": "Tail"}) == "Departing"
+
+
+def test_extract_direction_absent():
+    from anpr.dahua.parser import extract_direction
+    assert extract_direction({"TrafficCar": {"PlateNumber": "X"}}) == ""
+    assert extract_direction({}) == ""
 
 
 def test_normalize_traffic_event_empty_data():

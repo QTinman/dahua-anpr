@@ -187,6 +187,36 @@ def _as_int(value: Any) -> Optional[int]:
         return None
 
 
+# Dahua capture-direction values -> our labels. TrafficCar.DrivingDirection is
+# the authoritative "Capture Direction" (Approach/Leave); Vehicle.VehicleDirection
+# (Head/Tail = front/back facing the camera) is a fallback.
+_DRIVING_DIRECTION = {
+    "approach": "Approaching", "approaching": "Approaching",
+    "leave": "Departing", "depart": "Departing", "departing": "Departing",
+    "recede": "Departing", "receding": "Departing", "away": "Departing",
+}
+_VEHICLE_DIRECTION = {"head": "Approaching", "tail": "Departing"}
+
+
+def extract_direction(data: Dict[str, Any]) -> str:
+    """Return 'Approaching'/'Departing' from a Dahua traffic event, or ''."""
+    car = data.get("TrafficCar") if isinstance(data.get("TrafficCar"), dict) else {}
+    driving = car.get("DrivingDirection")
+    if isinstance(driving, list) and driving:
+        driving = driving[0]
+    if isinstance(driving, str):
+        mapped = _DRIVING_DIRECTION.get(driving.strip().lower())
+        if mapped:
+            return mapped
+    vehicle = data.get("Vehicle") if isinstance(data.get("Vehicle"), dict) else {}
+    vdir = vehicle.get("VehicleDirection") or data.get("VehicleDirection")
+    if isinstance(vdir, str):
+        mapped = _VEHICLE_DIRECTION.get(vdir.strip().lower())
+        if mapped:
+            return mapped
+    return ""
+
+
 def normalize_traffic_event(code: str, data: Dict[str, Any]) -> Dict[str, Any]:
     """Extract plate / vehicle attributes from a Dahua traffic event payload.
 
@@ -205,11 +235,7 @@ def normalize_traffic_event(code: str, data: Dict[str, Any]) -> Dict[str, Any]:
                         for source in (car, vehicle, obj, data)
                         for key in keys))
 
-    direction = pick("Direction", "DrivingDirection", "MovingDirection")
-    if isinstance(direction, list):
-        direction = ",".join(str(d) for d in direction)
-    direction = str(direction) if direction is not None else ""
-    direction = _DIRECTION_NAMES.get(direction, direction)
+    direction = extract_direction(data)
 
     event_time = _first(
         pick("SnapTime", "DeviceTime", "Time", "UTC", "LocalTime"),
