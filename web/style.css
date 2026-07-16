@@ -210,8 +210,10 @@ dd { margin: 0; }
 .camera-card .cam-sync { font-size: 12px; margin-top: 8px; min-height: 14px; word-break: break-word; white-space: normal; }
 
 /* ---------------------------------------------------------- playback */
-.playback-layout { display: grid; grid-template-columns: 300px 1fr; gap: 16px; align-items: start; }
-@media (max-width: 860px) { .playback-layout { grid-template-columns: 1fr; } }
+/* minmax(0, 1fr) lets the main column shrink below its content width so the
+   filmstrip scrolls inside itself instead of stretching the whole page. */
+.playback-layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 860px) { .playback-layout { grid-template-columns: minmax(0, 1fr); } }
 
 .calendar-panel {
   background: var(--bg-panel);
@@ -247,7 +249,7 @@ dd { margin: 0; }
 .cal-foot { margin-top: 10px; font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
 .cal-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); display: inline-block; }
 
-.playback-main { display: flex; flex-direction: column; gap: 14px; }
+.playback-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .pb-viewer {
   background: var(--bg-panel);
   border: 1px solid var(--border);
