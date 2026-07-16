@@ -180,6 +180,36 @@ class DahuaClient:
                 pass
         return records[:max_records]
 
+    async def sample_event(
+        self, codes: str = DEFAULT_EVENT_CODES, seconds: float = 60.0
+    ) -> Dict[str, object]:
+        """Watch the eventManager stream up to `seconds` and return the first
+        traffic event's full data (base64 shortened) - to inspect fields such
+        as capture direction."""
+        codes = codes.strip() or DEFAULT_EVENT_CODES
+        result = {"events": 0, "sample_event": ""}
+
+        async def collect() -> None:
+            async for part in self.stream_events(codes):
+                if part.kind != "event" or not part.event:
+                    continue
+                result["events"] += 1
+                code = part.event.get("code", "")
+                # Prefer a traffic capture (has the plate/direction fields).
+                if code.startswith("Traffic"):
+                    result["sample_event"] = _truncate_event(part.event)
+                    return
+                if not result["sample_event"]:
+                    result["sample_event"] = _truncate_event(part.event)
+
+        try:
+            await asyncio.wait_for(collect(), timeout=seconds)
+        except asyncio.TimeoutError:
+            pass
+        except DahuaError as exc:
+            result["error"] = str(exc)
+        return result
+
     async def diagnose_stream(
         self, codes: str = DEFAULT_EVENT_CODES, seconds: float = 12.0
     ) -> Dict[str, object]:

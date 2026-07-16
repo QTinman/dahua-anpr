@@ -140,6 +140,28 @@ async def diagnose_rtsp(request: Request, camera_id: int):
     return {"ok": True, "report": report}
 
 
+@router.api_route("/api/cameras/{camera_id}/sample-event",
+                  methods=["GET", "POST"])
+async def sample_event(request: Request, camera_id: int, seconds: int = 60):
+    """Watch the HTTP eventManager stream and return the first traffic event's
+    full data (to inspect fields such as capture direction)."""
+    state = _state(request)
+    camera = state.db.get_camera(camera_id)
+    if camera is None:
+        raise HTTPException(404, "Camera not found")
+    from .dahua.client import DahuaClient
+
+    seconds = max(5, min(seconds, 180))
+    client = DahuaClient(camera.host, camera.port, camera.username,
+                         camera.password, camera.use_https)
+    try:
+        return {"ok": True, **await client.sample_event(camera.event_codes, seconds)}
+    except DahuaError as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
 @router.api_route("/api/cameras/{camera_id}/sample-onvif",
                   methods=["GET", "POST"])
 async def sample_onvif(request: Request, camera_id: int):
