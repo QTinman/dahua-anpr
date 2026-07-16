@@ -22,6 +22,9 @@ class CameraBase(BaseModel):
     # the same frame, instead of matching images to events across streams.
     use_onvif: bool = False
     rtsp_port: int = Field(default=554, ge=1, le=65535)
+    # Direction handling. "" = auto (from the metadata, or inferred from the
+    # vehicle's movement); or a fixed lane direction the camera watches.
+    direction_mode: str = ""   # "", "Approaching", "Departing"
     enabled: bool = True
 
 
@@ -42,6 +45,7 @@ class CameraUpdate(BaseModel):
     snapshot_on_event: Optional[bool] = None
     use_onvif: Optional[bool] = None
     rtsp_port: Optional[int] = Field(default=None, ge=1, le=65535)
+    direction_mode: Optional[str] = None
     enabled: Optional[bool] = None
 
 
@@ -63,6 +67,7 @@ class CameraPublic(BaseModel):
     snapshot_on_event: bool
     use_onvif: bool
     rtsp_port: int
+    direction_mode: str = ""
     enabled: bool
     status: str = "disabled"
     status_detail: str = ""
@@ -81,6 +86,7 @@ class CameraPublic(BaseModel):
             snapshot_on_event=cam.snapshot_on_event,
             use_onvif=cam.use_onvif,
             rtsp_port=cam.rtsp_port,
+            direction_mode=cam.direction_mode,
             enabled=cam.enabled,
             status=status,
             status_detail=detail,

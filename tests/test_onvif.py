@@ -1,4 +1,23 @@
-from anpr.dahua.onvif import normalize_onvif_object, parse_onvif_metadata
+from anpr.dahua.onvif import (
+    direction_from_boxes,
+    normalize_onvif_object,
+    parse_onvif_metadata,
+)
+
+
+def test_direction_from_boxes():
+    # box grows (area up ~4x) -> approaching
+    grow = [(100, 100, 120, 120), (100, 100, 200, 200)]
+    assert direction_from_boxes(grow) == "Approaching"
+    # box shrinks -> departing
+    shrink = [(100, 100, 200, 200), (100, 100, 120, 120)]
+    assert direction_from_boxes(shrink) == "Departing"
+    # near-constant size -> unknown (dead-band)
+    steady = [(0, 0, 100, 100), (0, 0, 104, 104)]
+    assert direction_from_boxes(steady) == ""
+    # not enough data
+    assert direction_from_boxes([(0, 0, 50, 50)]) == ""
+    assert direction_from_boxes([]) == ""
 
 PLATE_XML = (
     '<?xml version="1.0" encoding="utf-8"?>'

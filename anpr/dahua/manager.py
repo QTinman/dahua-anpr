@@ -16,6 +16,7 @@ from ..database import Database
 from ..models import AnprEvent, Camera
 from ..ws import WebSocketHub
 from .client import DahuaClient, DahuaError
+from .onvif import direction_from_boxes
 from .parser import (
     extract_image_b64,
     is_traffic_code,
@@ -61,6 +62,10 @@ def _flush_onvif(pending: Dict[str, dict], now: float) -> list:
             continue
         if not entry["emitted"] and entry["data"].get("plate"):
             entry["emitted"] = True
+            if not entry["data"].get("direction"):
+                inferred = direction_from_boxes(entry.get("boxes", []))
+                if inferred:
+                    entry["data"]["direction"] = inferred
             out.append(entry["data"])
         if now - entry["last"] > ONVIF_FLUSH_SECONDS + 15:
             pending.pop(oid, None)
@@ -176,18 +181,33 @@ class CameraWorker:
             return []  # empty tracking frame
         entry = pending.get(oid)
         if entry is None:
-            entry = {"data": {}, "last": now, "emitted": False}
+            entry = {"data": {}, "last": now, "emitted": False, "boxes": []}
             pending[oid] = entry
         entry["last"] = now
+        # Track the vehicle's bounding boxes to infer direction from movement.
+        if obj.get("bbox"):
+            entry["boxes"].append(obj["bbox"])
         _merge_onvif(entry["data"], obj)
         # The capture is complete once the snapshot image is present.
         if entry["data"].get("image_b64") and not entry["emitted"]:
             entry["emitted"] = True
+            self._finalise_direction(entry)
             return [entry["data"]]
         return []
 
+    @staticmethod
+    def _finalise_direction(entry: dict) -> None:
+        # Only infer when the camera did not supply a direction itself.
+        if not entry["data"].get("direction"):
+            inferred = direction_from_boxes(entry.get("boxes", []))
+            if inferred:
+                entry["data"]["direction"] = inferred
+
     async def _store_onvif(self, data: dict, normalize) -> None:
         fields = normalize(data)
+        # A camera watching a fixed lane can force the direction.
+        if self.camera.direction_mode:
+            fields["direction"] = self.camera.direction_mode
         anpr = AnprEvent(
             camera_id=self.camera.id,
             camera_name=self.camera.name,
@@ -272,6 +292,8 @@ class CameraWorker:
             return
         data = event.get("data") or {}
         fields = normalize_traffic_event(code, data)
+        if self.camera.direction_mode:
+            fields["direction"] = self.camera.direction_mode
         # Keep every traffic/ANPR capture (including plate-less ones such as
         # "Unlicensed") and anything that carries a plate. This lets a camera
         # subscribed to "All" also record manual-snapshot captures while still

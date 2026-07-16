@@ -478,6 +478,7 @@ function openCameraDialog(cam = null) {
   $("#cam-snapshot").checked = cam ? cam.snapshot_on_event : true;
   $("#cam-onvif").checked = cam ? cam.use_onvif : false;
   $("#cam-rtsp-port").value = cam?.rtsp_port ?? 554;
+  $("#cam-direction").value = cam?.direction_mode || "";
   $("#cam-enabled").checked = cam ? cam.enabled : true;
   $("#cam-test-result").textContent = "";
   $("#camera-dialog").showModal();
@@ -530,6 +531,7 @@ $("#camera-form").addEventListener("submit", async (e) => {
     snapshot_on_event: $("#cam-snapshot").checked,
     use_onvif: $("#cam-onvif").checked,
     rtsp_port: parseInt($("#cam-rtsp-port").value, 10) || 554,
+    direction_mode: $("#cam-direction").value,
     enabled: $("#cam-enabled").checked,
   };
   try {

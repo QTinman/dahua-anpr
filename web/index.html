@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dahua ANPR Monitor</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%234c9aff'/%3E%3Ctext x='8' y='12' font-size='10' text-anchor='middle' fill='white' font-family='monospace' font-weight='bold'%3EP%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/style.css?v=14">
+<link rel="stylesheet" href="/static/style.css?v=15">
 </head>
 <body>
 <header>
@@ -312,6 +312,13 @@
       <label title="Use the ONVIF metadata stream (RTSP) as the source. Each plate comes with its own capture image and plate cutout from the same frame - the most reliable image match for ITC/ANPR cameras.">
         <input type="checkbox" id="cam-onvif"> ONVIF metadata (RTSP)</label>
       <label>RTSP port <input type="number" id="cam-rtsp-port" value="554" min="1" max="65535"></label>
+      <label title="Some cameras do not report direction. Auto uses the metadata or infers it from the vehicle's movement; a fixed value applies to every capture (for a lane that only goes one way).">
+        Direction
+        <select id="cam-direction">
+          <option value="">Auto (metadata / movement)</option>
+          <option value="Approaching">Always Approaching</option>
+          <option value="Departing">Always Departing</option>
+        </select></label>
       <label><input type="checkbox" id="cam-enabled" checked> Enabled</label>
     </div>
     <div class="form-actions">
@@ -331,6 +338,6 @@
   <button class="btn" id="image-dialog-close">Close</button>
 </dialog>
 
-<script src="/static/app.js?v=14"></script>
+<script src="/static/app.js?v=15"></script>
 </body>
 </html>

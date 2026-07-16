@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS cameras (
     snapshot_on_event INTEGER NOT NULL DEFAULT 1,
     use_onvif INTEGER NOT NULL DEFAULT 0,
     rtsp_port INTEGER NOT NULL DEFAULT 554,
+    direction_mode TEXT NOT NULL DEFAULT '',
     enabled INTEGER NOT NULL DEFAULT 1
 );
 
@@ -112,6 +113,7 @@ class Database:
             "rtsp_port": "INTEGER NOT NULL DEFAULT 554",
             "snapshot_on_event": "INTEGER NOT NULL DEFAULT 1",
             "event_codes": "TEXT NOT NULL DEFAULT 'TrafficJunction'",
+            "direction_mode": "TEXT NOT NULL DEFAULT ''",
         }
         for column, ddl in additions.items():
             if column not in existing:
@@ -146,13 +148,14 @@ class Database:
             cur = self._conn.execute(
                 """INSERT INTO cameras
                    (name, host, port, username, password, use_https, channel,
-                    event_codes, snapshot_on_event, use_onvif, rtsp_port, enabled)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    event_codes, snapshot_on_event, use_onvif, rtsp_port,
+                    direction_mode, enabled)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     cam.name, cam.host, cam.port, cam.username, cam.password,
                     int(cam.use_https), cam.channel, cam.event_codes,
                     int(cam.snapshot_on_event), int(cam.use_onvif),
-                    cam.rtsp_port, int(cam.enabled),
+                    cam.rtsp_port, cam.direction_mode, int(cam.enabled),
                 ),
             )
             self._conn.commit()
@@ -165,7 +168,7 @@ class Database:
         allowed = {
             "name", "host", "port", "username", "password", "use_https",
             "channel", "event_codes", "snapshot_on_event", "use_onvif",
-            "rtsp_port", "enabled",
+            "rtsp_port", "direction_mode", "enabled",
         }
         sets, values = [], []
         for key, value in fields.items():
@@ -206,6 +209,7 @@ class Database:
             snapshot_on_event=bool(row["snapshot_on_event"]),
             use_onvif=bool(row["use_onvif"]),
             rtsp_port=row["rtsp_port"],
+            direction_mode=row["direction_mode"],
             enabled=bool(row["enabled"]),
         )
 

@@ -1,4 +1,36 @@
-from anpr.dahua.manager import ONVIF_FLUSH_SECONDS, _flush_onvif, _merge_onvif
+from anpr.dahua.manager import (
+    ONVIF_FLUSH_SECONDS,
+    CameraWorker,
+    _flush_onvif,
+    _merge_onvif,
+)
+from anpr.models import Camera
+
+
+def test_accumulator_infers_direction_from_boxes():
+    worker = CameraWorker(Camera(id=1, name="c", host="h"), db=None, hub=None)
+    pending = {}
+    # two tracking frames with a growing box, then the capture (image) frame
+    worker._accumulate_onvif(
+        {"object_id": "5", "plate": "", "bbox": (100, 100, 120, 120)}, pending, 1.0)
+    worker._accumulate_onvif(
+        {"object_id": "5", "plate": "", "bbox": (100, 100, 200, 220)}, pending, 1.1)
+    out = worker._accumulate_onvif(
+        {"object_id": "5", "plate": "ABC123", "image_b64": "/9j/PIC",
+         "bbox": (100, 100, 260, 300)}, pending, 1.2)
+    assert len(out) == 1
+    assert out[0]["plate"] == "ABC123"
+    assert out[0]["direction"] == "Approaching"
+
+
+def test_accumulator_keeps_camera_direction_if_present():
+    worker = CameraWorker(Camera(id=1, name="c", host="h"), db=None, hub=None)
+    pending = {}
+    out = worker._accumulate_onvif(
+        {"object_id": "9", "plate": "X", "image_b64": "/9j/P",
+         "direction": "Departing", "bbox": (0, 0, 400, 400)}, pending, 1.0)
+    # a real direction from the camera is never overwritten by inference
+    assert out[0]["direction"] == "Departing"
 
 
 def test_merge_onvif_first_nonempty_wins():

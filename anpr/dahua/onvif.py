@@ -70,6 +70,48 @@ def _prop(props: Dict[str, str], *names: str) -> str:
     return ""
 
 
+def _bounding_box(appearance) -> Optional[tuple]:
+    """Return (left, top, right, bottom) from the Shape, if non-zero."""
+    shape = appearance.find(f"{TT}Shape")
+    if shape is None:
+        return None
+    box = shape.find(f"{TT}BoundingBox")
+    if box is None:
+        return None
+    try:
+        coords = (float(box.get("left", 0)), float(box.get("top", 0)),
+                  float(box.get("right", 0)), float(box.get("bottom", 0)))
+    except (TypeError, ValueError):
+        return None
+    # All-zero boxes appear on snapshot frames and carry no position info.
+    return coords if any(coords) else None
+
+
+# Direction inference from the bounding-box trajectory. A vehicle approaching
+# the camera grows in apparent size; one leaving shrinks. The thresholds leave
+# a dead-band so near-constant sizes stay "Unknown".
+_DIR_GROW = 1.15
+_DIR_SHRINK = 0.87
+
+
+def direction_from_boxes(boxes: List[tuple]) -> str:
+    """Infer 'Approaching' / 'Departing' from a sequence of bounding boxes."""
+    areas = []
+    for b in boxes:
+        w = max(0.0, b[2] - b[0])
+        h = max(0.0, b[3] - b[1])
+        if w > 0 and h > 0:
+            areas.append(w * h)
+    if len(areas) < 2:
+        return ""
+    ratio = areas[-1] / areas[0]
+    if ratio >= _DIR_GROW:
+        return "Approaching"
+    if ratio <= _DIR_SHRINK:
+        return "Departing"
+    return ""
+
+
 def parse_onvif_metadata(xml_text: str) -> List[Dict[str, Any]]:
     """Parse an ONVIF metadata document into a list of object dicts.
 
@@ -108,10 +150,12 @@ def parse_onvif_metadata(xml_text: str) -> List[Dict[str, Any]]:
             plate = _text(lpinfo, f"{TT}PlateNumber")
             vehicle_image = _text(vinfo, f"{TT}Image")
             plate_image = _text(lpinfo, f"{TT}Image")
+            bbox = _bounding_box(appearance)
 
-            # Skip empty tracking frames (no plate, no picture, no vehicle).
-            if not plate and not vehicle_image and not plate_image \
-                    and vinfo is None:
+            # Skip frames that carry nothing useful. Keep box-only tracking
+            # frames: their bounding-box trajectory is used to infer direction.
+            if (not plate and not vehicle_image and not plate_image
+                    and vinfo is None and bbox is None):
                 continue
 
             class_el = appearance.find(f"{TT}Class")
@@ -140,6 +184,7 @@ def parse_onvif_metadata(xml_text: str) -> List[Dict[str, Any]]:
                 "lane": lane,
                 "properties": props,
                 "speed": _as_float(_text(vinfo, f"{TT}Speed")),
+                "bbox": bbox,
                 # Use the full scene/vehicle image as the capture picture (it
                 # shows the vehicle with its plate, matching the camera UI);
                 # fall back to the plate cutout if that is all there is.
