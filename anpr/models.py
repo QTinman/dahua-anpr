@@ -191,3 +191,23 @@ class AccessSettingsPublic(AccessSettings):
         data["smtp_password_set"] = bool(data.get("smtp_password"))
         data["smtp_password"] = ""
         return cls(**data)
+
+
+# ---------------------------------------------------------------- auth
+
+class SetupRequest(BaseModel):
+    """First-run: create the initial admin, or skip to run without a login."""
+
+    skip: bool = False
+    username: str = Field(default="", max_length=64)
+    password: str = Field(default="", max_length=256)
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(max_length=64)
+    password: str = Field(max_length=256)
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str = Field(max_length=256)
+    new_password: str = Field(max_length=256)

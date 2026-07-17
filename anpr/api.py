@@ -7,8 +7,9 @@ from datetime import date as _date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from .auth import SESSION_COOKIE, SESSION_TTL_SECONDS
 from .dahua.client import DahuaError, probe
 from .models import (
     AccessSettings,
@@ -16,8 +17,11 @@ from .models import (
     CameraCreate,
     CameraPublic,
     CameraUpdate,
+    ChangePasswordRequest,
+    LoginRequest,
     ReportSettings,
     RetentionSettings,
+    SetupRequest,
     TestConnectionRequest,
     WhitelistCreate,
 )
@@ -28,6 +32,81 @@ router = APIRouter()
 
 def _state(request: Request):
     return request.app.state
+
+
+# --------------------------------------------------------------------- auth
+
+def _set_session_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        SESSION_COOKIE, token,
+        max_age=SESSION_TTL_SECONDS, httponly=True, samesite="lax", path="/",
+    )
+
+
+@router.get("/api/auth/status")
+async def auth_status(request: Request):
+    """Tell the browser whether to show setup, a login, or the app."""
+    auth = _state(request).auth
+    token = request.cookies.get(SESSION_COOKIE)
+    username = auth.validate(token)
+    return {
+        "needs_setup": auth.needs_setup(),
+        "auth_required": auth.auth_required(),
+        "authenticated": username is not None or not auth.auth_required(),
+        "username": username,
+    }
+
+
+@router.post("/api/auth/setup")
+async def auth_setup(request: Request, body: SetupRequest):
+    auth = _state(request).auth
+    if auth.has_users():
+        raise HTTPException(409, "Setup already completed")
+    if body.skip:
+        auth.disable()
+        return JSONResponse({"ok": True, "auth_required": False})
+    try:
+        auth.setup(body.username, body.password)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    token = auth.login(body.username, body.password)
+    response = JSONResponse({"ok": True, "auth_required": True})
+    _set_session_cookie(response, token)
+    return response
+
+
+@router.post("/api/auth/login")
+async def auth_login(request: Request, body: LoginRequest):
+    auth = _state(request).auth
+    token = auth.login(body.username, body.password)
+    if not token:
+        raise HTTPException(401, "Invalid username or password")
+    response = JSONResponse({"ok": True, "username": body.username.strip()})
+    _set_session_cookie(response, token)
+    return response
+
+
+@router.post("/api/auth/logout")
+async def auth_logout(request: Request):
+    auth = _state(request).auth
+    auth.logout(request.cookies.get(SESSION_COOKIE))
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return response
+
+
+@router.post("/api/auth/change-password")
+async def auth_change_password(request: Request, body: ChangePasswordRequest):
+    auth = _state(request).auth
+    username = auth.validate(request.cookies.get(SESSION_COOKIE))
+    if not username:
+        # Auth may be disabled; there's no account to change.
+        raise HTTPException(400, "No signed-in account")
+    try:
+        auth.change_password(username, body.old_password, body.new_password)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"ok": True}
 
 
 @router.get("/api/diagnostics")
@@ -430,6 +509,11 @@ async def run_report_now(request: Request, day: str = ""):
 @router.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     state = ws.app.state
+    # Require a valid session when auth is on; the browser sends the cookie.
+    if state.auth.auth_required() and not state.auth.validate(
+            ws.cookies.get(SESSION_COOKIE)):
+        await ws.close(code=1008)
+        return
     hub = state.hub
     await hub.connect(ws)
     try:

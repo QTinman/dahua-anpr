@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dahua ANPR Monitor</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%234c9aff'/%3E%3Ctext x='8' y='12' font-size='10' text-anchor='middle' fill='white' font-family='monospace' font-weight='bold'%3EP%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/style.css?v=15">
+<link rel="stylesheet" href="/static/style.css?v=16">
 </head>
 <body>
 <header>
@@ -21,8 +21,55 @@
     <button class="tab" data-tab="whitelist">Whitelist</button>
     <button class="tab" data-tab="reports">Settings</button>
   </nav>
-  <div id="ws-status" class="ws-status offline" title="WebSocket connection">offline</div>
+  <div class="header-right">
+    <div id="account" class="account hidden">
+      <span id="account-user" class="account-user"></span>
+      <button id="logout-btn" class="btn small">Log out</button>
+    </div>
+    <div id="ws-status" class="ws-status offline" title="WebSocket connection">offline</div>
+  </div>
 </header>
+
+<!-- First-run setup / login gate -->
+<div id="auth-overlay" class="auth-overlay hidden">
+  <div class="auth-card">
+    <div class="brand auth-brand">
+      <span class="brand-icon">▣</span>
+      <h1>Dahua ANPR Monitor</h1>
+    </div>
+
+    <!-- First run: create an admin account (or skip) -->
+    <form id="setup-form" class="auth-form hidden">
+      <h2>Welcome — set up a login</h2>
+      <p class="muted">Create an administrator account to protect this monitor,
+        or skip to run it without a login on a trusted network.</p>
+      <label>Username <input type="text" id="setup-user" autocomplete="username"
+             maxlength="64"></label>
+      <label>Password <input type="password" id="setup-pass"
+             autocomplete="new-password" maxlength="256"></label>
+      <label>Confirm password <input type="password" id="setup-pass2"
+             autocomplete="new-password" maxlength="256"></label>
+      <div class="auth-actions">
+        <button type="submit" class="btn primary">Create account</button>
+        <button type="button" id="setup-skip" class="btn">Skip — no login</button>
+      </div>
+      <div id="setup-msg" class="msg-err"></div>
+    </form>
+
+    <!-- Returning: log in -->
+    <form id="login-form" class="auth-form hidden">
+      <h2>Sign in</h2>
+      <label>Username <input type="text" id="login-user" autocomplete="username"
+             maxlength="64"></label>
+      <label>Password <input type="password" id="login-pass"
+             autocomplete="current-password" maxlength="256"></label>
+      <div class="auth-actions">
+        <button type="submit" class="btn primary">Sign in</button>
+      </div>
+      <div id="login-msg" class="msg-err"></div>
+    </form>
+  </div>
+</div>
 
 <main>
   <!-- ============================= LIVE ============================== -->
@@ -278,6 +325,23 @@
         </div>
       </form>
     </div>
+
+    <div class="panel" id="account-panel" hidden>
+      <h2>Account</h2>
+      <p class="muted">Change the password for the signed-in account.</p>
+      <form id="password-form" class="form-grid">
+        <label>Current password <input type="password" id="pw-old"
+               autocomplete="current-password"></label>
+        <label>New password <input type="password" id="pw-new"
+               autocomplete="new-password"></label>
+        <label>Confirm new password <input type="password" id="pw-new2"
+               autocomplete="new-password"></label>
+        <div class="form-actions">
+          <button type="submit" class="btn primary">Change password</button>
+          <span id="pw-msg" class="muted"></span>
+        </div>
+      </form>
+    </div>
   </section>
 </main>
 
@@ -338,6 +402,6 @@
   <button class="btn" id="image-dialog-close">Close</button>
 </dialog>
 
-<script src="/static/app.js?v=15"></script>
+<script src="/static/app.js?v=16"></script>
 </body>
 </html>

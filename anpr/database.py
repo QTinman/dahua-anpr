@@ -80,6 +80,19 @@ CREATE TABLE IF NOT EXISTS access_log (
     detail TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_access_log_id ON access_log(id);
+
+CREATE TABLE IF NOT EXISTS users (
+    username TEXT PRIMARY KEY,
+    salt TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    username TEXT NOT NULL,
+    expires_at REAL NOT NULL
+);
 """
 
 
@@ -429,6 +442,79 @@ class Database:
                 "SELECT * FROM access_log ORDER BY id DESC LIMIT ?", (limit,)
             ).fetchall()
         return [dict(r) for r in rows]
+
+    # --------------------------------------------------------------- users
+
+    def count_users(self) -> int:
+        with self._lock:
+            return self._conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+
+    def get_user(self, username: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        return dict(row) if row else None
+
+    def add_user(self, username: str, salt: str, password_hash: str,
+                 created_at: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO users (username, salt, password_hash, created_at) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT(username) DO UPDATE SET "
+                "salt=excluded.salt, password_hash=excluded.password_hash",
+                (username, salt, password_hash, created_at))
+            self._conn.commit()
+
+    def update_user_password(self, username: str, salt: str,
+                             password_hash: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET salt = ?, password_hash = ? WHERE username = ?",
+                (salt, password_hash, username))
+            self._conn.commit()
+
+    def list_users(self) -> List[str]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT username FROM users ORDER BY username").fetchall()
+        return [r["username"] for r in rows]
+
+    def delete_user(self, username: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM users WHERE username = ?", (username,))
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    # ------------------------------------------------------------ sessions
+
+    def add_session(self, token: str, username: str, expires_at: float) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO sessions (token, username, expires_at) "
+                "VALUES (?, ?, ?)", (token, username, expires_at))
+            self._conn.commit()
+
+    def get_session(self, token: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM sessions WHERE token = ?", (token,)).fetchone()
+        return dict(row) if row else None
+
+    def delete_session(self, token: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+            self._conn.commit()
+
+    def delete_expired_sessions(self, now: float) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
+            self._conn.commit()
+
+    def delete_user_sessions(self, username: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM sessions WHERE username = ?", (username,))
+            self._conn.commit()
 
     def get_setting(self, key: str, default: Any = None) -> Any:
         with self._lock:

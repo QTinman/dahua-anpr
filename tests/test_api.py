@@ -209,3 +209,88 @@ def test_connection_test_unreachable(client):
     })
     assert resp.status_code == 200
     assert resp.json()["ok"] is False
+
+
+# ------------------------------------------------------------------- auth
+
+def test_auth_status_fresh_db_needs_setup(client):
+    status = client.get("/api/auth/status").json()
+    assert status["needs_setup"] is True
+    assert status["auth_required"] is False
+    # No users yet -> the app is reachable without a login.
+    assert status["authenticated"] is True
+    assert client.get("/api/cameras").status_code == 200
+
+
+def test_setup_creates_account_and_protects_api(client):
+    resp = client.post("/api/auth/setup",
+                       json={"username": "admin", "password": "secret1"})
+    assert resp.status_code == 200
+    assert resp.json()["auth_required"] is True
+    # The setup response set a session cookie on this client.
+    status = client.get("/api/auth/status").json()
+    assert status["needs_setup"] is False
+    assert status["auth_required"] is True
+    assert status["authenticated"] is True
+    assert status["username"] == "admin"
+    # This client is signed in, so the API is reachable.
+    assert client.get("/api/cameras").status_code == 200
+    # A second setup attempt is rejected.
+    assert client.post("/api/auth/setup",
+                       json={"username": "x", "password": "yyyyyy"}).status_code == 409
+
+
+def test_setup_rejects_short_password(client):
+    resp = client.post("/api/auth/setup",
+                       json={"username": "admin", "password": "short"})
+    assert resp.status_code == 400
+
+
+def test_setup_skip_disables_auth(client):
+    resp = client.post("/api/auth/setup", json={"skip": True})
+    assert resp.status_code == 200
+    assert resp.json()["auth_required"] is False
+    status = client.get("/api/auth/status").json()
+    assert status["needs_setup"] is False
+    assert status["auth_required"] is False
+    assert client.get("/api/cameras").status_code == 200
+
+
+def test_api_requires_login_without_cookie(client):
+    client.post("/api/auth/setup", json={"username": "admin", "password": "secret1"})
+    # A fresh client with no session cookie is locked out of the API.
+    from fastapi.testclient import TestClient
+    from anpr.main import app
+    with TestClient(app) as anon:
+        assert anon.get("/api/cameras").status_code == 401
+        status = anon.get("/api/auth/status").json()
+        assert status["auth_required"] is True
+        assert status["authenticated"] is False
+        # Wrong credentials are rejected.
+        assert anon.post("/api/auth/login",
+                         json={"username": "admin", "password": "nope"}).status_code == 401
+        # Correct credentials open the API.
+        assert anon.post("/api/auth/login",
+                         json={"username": "admin", "password": "secret1"}).status_code == 200
+        assert anon.get("/api/cameras").status_code == 200
+        # Logout revokes the session.
+        assert anon.post("/api/auth/logout").status_code == 200
+        assert anon.get("/api/cameras").status_code == 401
+
+
+def test_change_password(client):
+    client.post("/api/auth/setup", json={"username": "admin", "password": "secret1"})
+    # Wrong current password is rejected.
+    assert client.post("/api/auth/change-password",
+                       json={"old_password": "wrong", "new_password": "newpass1"}
+                       ).status_code == 400
+    # Correct change succeeds and the new password works for login.
+    assert client.post("/api/auth/change-password",
+                       json={"old_password": "secret1", "new_password": "newpass1"}
+                       ).status_code == 200
+    from fastapi.testclient import TestClient
+    from anpr.main import app
+    with TestClient(app) as anon:
+        assert anon.post("/api/auth/login",
+                         json={"username": "admin", "password": "newpass1"}
+                         ).status_code == 200

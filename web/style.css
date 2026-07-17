@@ -339,3 +339,41 @@ dialog::backdrop { background: rgba(0,0,0,0.6); }
 dialog h2 { margin: 0 0 4px; font-size: 16px; }
 #image-dialog { text-align: center; }
 #image-dialog img { max-width: 80vw; max-height: 70vh; border-radius: 6px; margin-bottom: 12px; }
+
+/* ------------------------------------------------------------------ auth */
+.hidden { display: none !important; }
+
+.header-right { display: flex; align-items: center; gap: 12px; }
+.account { display: flex; align-items: center; gap: 8px; }
+.account-user {
+  color: var(--text); font-size: 13px; font-weight: 600;
+  max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.account-user::before { content: "\1F464"; margin-right: 6px; opacity: 0.7; }
+
+.auth-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(10, 12, 17, 0.92); padding: 20px;
+}
+.auth-card {
+  background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 28px 30px; width: 100%; max-width: 380px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.auth-brand { justify-content: center; margin-bottom: 20px; }
+.auth-brand h1 { font-size: 18px; }
+.auth-form h2 { font-size: 16px; margin: 0 0 6px; }
+.auth-form .muted { margin: 0 0 16px; font-size: 13px; }
+.auth-form label {
+  display: block; color: var(--muted); font-size: 12px; margin-bottom: 12px;
+}
+.auth-form input {
+  display: block; width: 100%; margin-top: 4px; box-sizing: border-box;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); padding: 9px 11px; font-size: 14px;
+}
+.auth-form input:focus { outline: none; border-color: var(--accent); }
+.auth-actions { display: flex; gap: 10px; margin-top: 8px; }
+.auth-actions .btn { flex: 1; justify-content: center; }
+#setup-msg, #login-msg { min-height: 18px; margin-top: 12px; font-size: 13px; }

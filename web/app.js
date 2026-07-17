@@ -15,6 +15,11 @@ async function api(path, options = {}) {
   if (!resp.ok) {
     let detail = resp.statusText;
     try { detail = (await resp.json()).detail || detail; } catch (_) {}
+    // A 401 on a normal call (not the auth flow itself) means the session
+    // lapsed; let the app surface the login screen.
+    if (resp.status === 401 && !path.startsWith("/api/auth/")) {
+      window.dispatchEvent(new Event("anpr-unauthorized"));
+    }
     throw new Error(detail);
   }
   return resp.status === 204 ? null : resp.json();
@@ -1026,21 +1031,157 @@ $("#acc-email-test").addEventListener("click", async () => {
   } catch (err) { msg.textContent = "✗ " + err.message; msg.className = "msg-err"; }
 });
 
+/* ------------------------------------------------------------------ auth */
+
+let appStarted = false;
+
+function startApp() {
+  if (appStarted) return;
+  appStarted = true;
+  connectWs();
+  loadRecentEvents();
+  loadCameras().then(() => {
+    // Seed status badges from the API snapshot before WS updates arrive.
+    api("/api/cameras").then((cameras) => {
+      for (const cam of cameras) {
+        if (!cameraStatuses.has(cam.id)) {
+          cameraStatuses.set(cam.id, {
+            name: cam.name, status: cam.status, detail: cam.status_detail,
+          });
+        }
+      }
+      renderBadges();
+    }).catch(() => {});
+  });
+  populateCameraFilter();
+}
+
+function showAuth(which) {
+  $("#auth-overlay").classList.remove("hidden");
+  $("#setup-form").classList.toggle("hidden", which !== "setup");
+  $("#login-form").classList.toggle("hidden", which !== "login");
+  const focus = which === "setup" ? "#setup-user" : "#login-user";
+  $(focus)?.focus();
+}
+
+function hideAuth() {
+  $("#auth-overlay").classList.add("hidden");
+}
+
+// Reflect the signed-in account in the header and Settings.
+function applyAccount(status) {
+  const account = $("#account");
+  const panel = $("#account-panel");
+  if (status.auth_required && status.username) {
+    $("#account-user").textContent = status.username;
+    account.classList.remove("hidden");
+    if (panel) panel.hidden = false;
+  } else {
+    account.classList.add("hidden");
+    if (panel) panel.hidden = true;
+  }
+}
+
+async function initAuth() {
+  let status;
+  try {
+    status = await api("/api/auth/status");
+  } catch (_) {
+    // If the status check fails, fall back to starting the app so a network
+    // blip never locks the user out of an unauthenticated install.
+    startApp();
+    return;
+  }
+  if (status.needs_setup) {
+    showAuth("setup");
+  } else if (status.auth_required && !status.authenticated) {
+    showAuth("login");
+  } else {
+    applyAccount(status);
+    hideAuth();
+    startApp();
+  }
+}
+
+// A 401 from any API call means the session expired mid-use: show the login.
+window.addEventListener("anpr-unauthorized", () => showAuth("login"));
+
+$("#setup-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#setup-msg");
+  const user = $("#setup-user").value.trim();
+  const pass = $("#setup-pass").value;
+  const pass2 = $("#setup-pass2").value;
+  msg.textContent = "";
+  if (pass !== pass2) { msg.textContent = "Passwords do not match."; return; }
+  try {
+    await api("/api/auth/setup", {
+      method: "POST",
+      body: JSON.stringify({ username: user, password: pass }),
+    });
+    hideAuth();
+    await initAuth();
+  } catch (err) { msg.textContent = err.message; }
+});
+
+$("#setup-skip").addEventListener("click", async () => {
+  const msg = $("#setup-msg");
+  try {
+    await api("/api/auth/setup", {
+      method: "POST", body: JSON.stringify({ skip: true }),
+    });
+    hideAuth();
+    startApp();
+  } catch (err) { msg.textContent = err.message; }
+});
+
+$("#login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#login-msg");
+  msg.textContent = "";
+  try {
+    await api("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({
+        username: $("#login-user").value.trim(),
+        password: $("#login-pass").value,
+      }),
+    });
+    $("#login-pass").value = "";
+    hideAuth();
+    await initAuth();
+    // If the app was already running (session expired then re-login), just
+    // refresh; otherwise startApp() inside initAuth boots it.
+    location.reload();
+  } catch (err) { msg.textContent = err.message; }
+});
+
+$("#logout-btn").addEventListener("click", async () => {
+  try { await api("/api/auth/logout", { method: "POST" }); } catch (_) {}
+  location.reload();
+});
+
+$("#password-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#pw-msg");
+  const oldp = $("#pw-old").value;
+  const newp = $("#pw-new").value;
+  const newp2 = $("#pw-new2").value;
+  msg.className = "muted";
+  if (newp !== newp2) {
+    msg.textContent = "New passwords do not match."; msg.className = "msg-err"; return;
+  }
+  msg.textContent = "Saving…";
+  try {
+    await api("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ old_password: oldp, new_password: newp }),
+    });
+    msg.textContent = "✓ Password changed."; msg.className = "msg-ok";
+    $("#password-form").reset();
+  } catch (err) { msg.textContent = "✗ " + err.message; msg.className = "msg-err"; }
+});
+
 /* ----------------------------------------------------------------- init */
 
-connectWs();
-loadRecentEvents();
-loadCameras().then(() => {
-  // Seed status badges from the API snapshot before WS updates arrive.
-  api("/api/cameras").then((cameras) => {
-    for (const cam of cameras) {
-      if (!cameraStatuses.has(cam.id)) {
-        cameraStatuses.set(cam.id, {
-          name: cam.name, status: cam.status, detail: cam.status_detail,
-        });
-      }
-    }
-    renderBadges();
-  }).catch(() => {});
-});
-populateCameraFilter();
+initAuth();
