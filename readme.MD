@@ -187,5 +187,11 @@ pytest
 - Camera credentials are stored in the SQLite database in plain text (as in
   the original WinForms app). Run the server on a trusted network, or put it
   behind a reverse proxy with authentication if it must be exposed.
-- The web UI itself has no login; it is intended for LAN / operator-station
-  use, matching the original desktop application.
+- On first start the web UI offers to create an administrator login (or you
+  can skip it to run without one on a trusted LAN). Once an account exists the
+  API and live feed require a session. Set `ANPR_NO_AUTH=1` to disable the
+  login entirely. Passwords are stored as PBKDF2-HMAC-SHA256 hashes.
+
+## License
+
+Released under the [MIT License](LICENSE) — Copyright (c) 2026 QTinman.
