@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dahua ANPR Monitor</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%234c9aff'/%3E%3Ctext x='8' y='12' font-size='10' text-anchor='middle' fill='white' font-family='monospace' font-weight='bold'%3EP%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/style.css?v=16">
+<link rel="stylesheet" href="/static/style.css?v=17">
 </head>
 <body>
 <header>
@@ -26,6 +26,7 @@
       <span id="account-user" class="account-user"></span>
       <button id="logout-btn" class="btn small">Log out</button>
     </div>
+    <button id="about-btn" class="btn small" title="About this software">About</button>
     <div id="ws-status" class="ws-status offline" title="WebSocket connection">offline</div>
   </div>
 </header>
@@ -402,6 +403,58 @@
   <button class="btn" id="image-dialog-close">Close</button>
 </dialog>
 
-<script src="/static/app.js?v=16"></script>
+<!-- About -->
+<dialog id="about-dialog" class="about-dialog">
+  <div class="about-head">
+    <span class="brand-icon">▣</span>
+    <div>
+      <h2>Dahua ANPR Monitor</h2>
+      <span class="about-version">Version 1.0</span>
+    </div>
+  </div>
+
+  <p class="about-lead">A standalone, self-hosted web monitor for Dahua ANPR /
+    ITC licence-plate cameras — live plate capture, search, calendar playback,
+    whitelist-driven gate control and email alerts, scheduled reports and
+    snapshot retention. No VMS required.</p>
+
+  <div class="about-cols">
+    <div>
+      <h3>Highlights</h3>
+      <ul>
+        <li>Live plate feed with same-frame capture images</li>
+        <li>ONVIF RTSP metadata + HTTP event capture</li>
+        <li>Approach / depart direction detection</li>
+        <li>Search, CSV export & calendar playback</li>
+        <li>Whitelist gate output + non-whitelist email alerts</li>
+        <li>Scheduled daily reports & snapshot retention</li>
+        <li>Optional first-run login</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Built with</h3>
+      <ul>
+        <li>Python · FastAPI · uvicorn</li>
+        <li>Pure-Python RTSP/ONVIF metadata client</li>
+        <li>SQLite storage</li>
+        <li>Vanilla JS / HTML / CSS — no build step</li>
+        <li>WebSocket live push</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="about-foot">
+    <div class="about-meta">
+      <div>© 2026 <strong>QTinman</strong> · <a href="https://github.com/QTinman/dahua-anpr" target="_blank" rel="noopener noreferrer">GitHub</a></div>
+      <div>Released under the MIT License</div>
+    </div>
+    <div class="about-actions">
+      <a class="btn primary" href="https://compute.is" target="_blank" rel="noopener noreferrer">Visit compute.is ↗</a>
+      <button class="btn" id="about-close">Close</button>
+    </div>
+  </div>
+</dialog>
+
+<script src="/static/app.js?v=17"></script>
 </body>
 </html>

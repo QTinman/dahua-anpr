@@ -359,6 +359,14 @@ function openImage(eventId, plate) {
 }
 $("#image-dialog-close").addEventListener("click", () => $("#image-dialog").close());
 
+/* ---------------------------------------------------------------- about */
+$("#about-btn").addEventListener("click", () => $("#about-dialog").showModal());
+$("#about-close").addEventListener("click", () => $("#about-dialog").close());
+$("#about-dialog").addEventListener("click", (e) => {
+  // Click on the backdrop (outside the dialog content) closes it.
+  if (e.target === $("#about-dialog")) $("#about-dialog").close();
+});
+
 document.addEventListener("click", (e) => {
   const icon = e.target.closest(".img-yes");
   if (!icon) return;
