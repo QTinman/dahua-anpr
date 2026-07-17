@@ -102,8 +102,6 @@ class CameraWorker:
         # normalised plate -> (direction, loop time), plus a time-based fallback.
         self._dir_by_plate: Dict[str, tuple] = {}
         self._last_direction: tuple = ("", 0.0)
-        # HTTP client kept in ONVIF mode for the live-snapshot fallback.
-        self._onvif_http: Optional[DahuaClient] = None
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._run(), name=f"camera-{self.camera.id}")
@@ -139,9 +137,6 @@ class CameraWorker:
             # learn each plate's direction and attach it to the ONVIF capture.
             http = DahuaClient(cam.host, cam.port, cam.username, cam.password,
                                cam.use_https)
-            # Reused for the snapshot fallback when an ONVIF capture arrives
-            # without its embedded picture.
-            self._onvif_http = http
             dir_task = asyncio.create_task(self._run_event_directions(http))
             try:
                 await self._run_onvif()
@@ -299,21 +294,12 @@ class CameraWorker:
             **fields,
         )
         event_id = self.db.add_event(anpr)
-        has_image = anpr.image_b64 is not None
         payload = anpr.model_dump()
         payload["id"] = event_id
-        payload["has_image"] = has_image
+        payload["has_image"] = anpr.image_b64 is not None
         payload.pop("image_b64", None)
         await self.hub.broadcast({"type": "anpr_event", "event": payload})
         await self._apply_access(anpr)
-
-        # Some firmwares (or a busy camera) deliver ONVIF metadata without the
-        # embedded snapshot. Pull a live picture over HTTP so the capture is
-        # never left image-less.
-        if not has_image and self.camera.snapshot_on_event \
-                and self._onvif_http is not None:
-            asyncio.create_task(
-                self._snapshot_fallback(event_id, self._onvif_http, delay=0.0))
 
     async def _apply_access(self, anpr: AnprEvent) -> None:
         if self.access is not None:
@@ -447,11 +433,9 @@ class CameraWorker:
         self._buffered_image = image
         self._buffered_image_at = loop_now
 
-    async def _snapshot_fallback(self, event_id: int, client: DahuaClient,
-                                 delay: float = IMAGE_MATCH_WINDOW) -> None:
+    async def _snapshot_fallback(self, event_id: int, client: DahuaClient) -> None:
         """If no embedded image arrived shortly after the event, pull one."""
-        if delay:
-            await asyncio.sleep(delay)
+        await asyncio.sleep(IMAGE_MATCH_WINDOW)
         if self.db.get_event_image(event_id):
             return
         image = await client.snapshot(self.camera.channel)

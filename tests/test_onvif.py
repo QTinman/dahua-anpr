@@ -95,3 +95,42 @@ def test_normalize_onvif_object():
     assert fields["country"] == "DEU"
     assert fields["vehicle_brand"] == "Audi"
     assert fields["event_time"] == "2026-07-15T04:48:11Z"
+
+
+# Newer ITC firmware (e.g. ITC413) puts the capture image directly under
+# <Appearance>, reports vehicle colour as an RGB ColorCluster, and fills
+# unknown attributes with the literal "Unknown".
+NEW_FW_XML = (
+    '<tt:MetadataStream xmlns:tt="http://www.onvif.org/ver10/schema">'
+    '<tt:VideoAnalytics><tt:Frame UtcTime="2026-07-17T08:25:54Z">'
+    '<tt:Object ObjectId="0"><tt:Appearance>'
+    '<tt:Shape><tt:BoundingBox left="1" top="1" right="1" bottom="1"/></tt:Shape>'
+    '<tt:Class><tt:Type Likelihood="0.9">LicensePlate</tt:Type></tt:Class>'
+    '<tt:VehicleInfo><tt:Type Likelihood="0.9">Unknown</tt:Type>'
+    '<tt:Brand Likelihood="0.9">Unknown</tt:Brand>'
+    '<tt:Color><tt:ColorCluster>'
+    '<tt:Color X="255" Y="255" Z="255" Colorspace="rgb"/>'
+    '</tt:ColorCluster></tt:Color></tt:VehicleInfo>'
+    '<tt:LicensePlateInfo><tt:PlateNumber Likelihood="0.9">EKG10</tt:PlateNumber>'
+    '<tt:CountryCode Likelihood="0.9">Unknown</tt:CountryCode>'
+    '</tt:LicensePlateInfo>'
+    '<tt:Image>/9j/SCENE</tt:Image>'
+    '</tt:Appearance></tt:Object></tt:Frame></tt:VideoAnalytics>'
+    '</tt:MetadataStream>'
+)
+
+
+def test_parse_onvif_new_firmware_format():
+    objs = parse_onvif_metadata(NEW_FW_XML)
+    assert len(objs) == 1
+    o = objs[0]
+    assert o["plate"] == "EKG10"
+    # image now lives directly under <Appearance>, not under VehicleInfo
+    assert o["image_b64"] == "/9j/SCENE"
+    # colour derived from the RGB ColorCluster (255,255,255 -> White)
+    assert o["vehicle_color"] == "White"
+    # placeholder "Unknown" labels are blanked out
+    assert o["vehicle_type"] == ""
+    assert o["country"] == ""
+    # the degenerate 1/1/1/1 placeholder box is ignored
+    assert o["bbox"] is None

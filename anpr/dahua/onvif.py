@@ -71,7 +71,7 @@ def _prop(props: Dict[str, str], *names: str) -> str:
 
 
 def _bounding_box(appearance) -> Optional[tuple]:
-    """Return (left, top, right, bottom) from the Shape, if non-zero."""
+    """Return (left, top, right, bottom) from the Shape, if it has real area."""
     shape = appearance.find(f"{TT}Shape")
     if shape is None:
         return None
@@ -83,8 +83,52 @@ def _bounding_box(appearance) -> Optional[tuple]:
                   float(box.get("right", 0)), float(box.get("bottom", 0)))
     except (TypeError, ValueError):
         return None
-    # All-zero boxes appear on snapshot frames and carry no position info.
-    return coords if any(coords) else None
+    # Snapshot frames carry placeholder boxes (all-zero, or all-ones like the
+    # 1/1/1/1 the ITC413 sends) with no real area - ignore them.
+    if coords[2] <= coords[0] or coords[3] <= coords[1]:
+        return None
+    return coords
+
+
+# Basic colour palette for mapping an ONVIF RGB ColorCluster to a name. Newer
+# firmwares report the dominant vehicle colour as RGB rather than a text label.
+_COLOR_NAMES = (
+    ("White", (255, 255, 255)), ("Black", (0, 0, 0)), ("Gray", (128, 128, 128)),
+    ("Silver", (192, 192, 192)), ("Red", (200, 30, 30)), ("Blue", (40, 70, 200)),
+    ("Green", (30, 140, 60)), ("Yellow", (225, 210, 40)), ("Brown", (120, 70, 30)),
+)
+
+
+def _rgb_to_name(r: float, g: float, b: float) -> str:
+    best, best_dist = "", None
+    for name, (cr, cg, cb) in _COLOR_NAMES:
+        dist = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2
+        if best_dist is None or dist < best_dist:
+            best, best_dist = name, dist
+    return best
+
+
+def _vehicle_color(vinfo) -> str:
+    """Vehicle colour, from a text label (old firmware) or an RGB ColorCluster."""
+    if vinfo is None:
+        return ""
+    label = _text(vinfo, f"{TT}Color")
+    if label and label.lower() != "unknown":
+        return label
+    cluster = vinfo.find(f"{TT}Color/{TT}ColorCluster/{TT}Color")
+    if cluster is not None:
+        try:
+            return _rgb_to_name(float(cluster.get("X", 0)),
+                                float(cluster.get("Y", 0)),
+                                float(cluster.get("Z", 0)))
+        except (TypeError, ValueError):
+            return ""
+    return ""
+
+
+def _clean(value: str) -> str:
+    """Drop placeholder 'Unknown' labels so the UI shows a blank, not noise."""
+    return "" if value.strip().lower() == "unknown" else value
 
 
 # Direction inference from the bounding-box trajectory. A vehicle approaching
@@ -148,13 +192,19 @@ def parse_onvif_metadata(xml_text: str) -> List[Dict[str, Any]]:
             lpinfo = appearance.find(f"{TT}LicensePlateInfo")
 
             plate = _text(lpinfo, f"{TT}PlateNumber")
+            # The capture image location moved between firmwares: newer ITC
+            # firmware puts a single scene image directly under <Appearance>;
+            # older firmware nested separate images under VehicleInfo and
+            # LicensePlateInfo. Accept whichever is present.
+            appearance_image = _text(appearance, f"{TT}Image")
             vehicle_image = _text(vinfo, f"{TT}Image")
             plate_image = _text(lpinfo, f"{TT}Image")
+            capture_image = appearance_image or vehicle_image or plate_image or None
             bbox = _bounding_box(appearance)
 
             # Skip frames that carry nothing useful. Keep box-only tracking
             # frames: their bounding-box trajectory is used to infer direction.
-            if (not plate and not vehicle_image and not plate_image
+            if (not plate and capture_image is None
                     and vinfo is None and bbox is None):
                 continue
 
@@ -172,24 +222,23 @@ def parse_onvif_metadata(xml_text: str) -> List[Dict[str, Any]]:
                 "object_id": obj.get("ObjectId", ""),
                 "class_type": _text(class_el, f"{TT}Type"),
                 "plate": plate,
-                "plate_type": _text(lpinfo, f"{TT}PlateType"),
-                "country": _text(lpinfo, f"{TT}CountryCode"),
-                "plate_color": _text(lpinfo, f"{TT}Color"),
+                "plate_type": _clean(_text(lpinfo, f"{TT}PlateType")),
+                "country": _clean(_text(lpinfo, f"{TT}CountryCode")),
+                "plate_color": _clean(_text(lpinfo, f"{TT}Color")),
                 "plate_list": _text(lpinfo, f"{TT}ListType"),
-                "vehicle_type": _text(vinfo, f"{TT}Type"),
-                "vehicle_brand": _text(vinfo, f"{TT}Brand"),
-                "vehicle_color": _text(vinfo, f"{TT}Color"),
+                "vehicle_type": _clean(_text(vinfo, f"{TT}Type")),
+                "vehicle_brand": _clean(_text(vinfo, f"{TT}Brand")),
+                "vehicle_color": _vehicle_color(vinfo),
                 "vehicle_size": _text(vinfo, f"{TT}Size"),
                 "direction": direction,
                 "lane": lane,
                 "properties": props,
                 "speed": _as_float(_text(vinfo, f"{TT}Speed")),
                 "bbox": bbox,
-                # Use the full scene/vehicle image as the capture picture (it
-                # shows the vehicle with its plate, matching the camera UI);
-                # fall back to the plate cutout if that is all there is.
-                "image_b64": vehicle_image or plate_image or None,
-                "vehicle_image_b64": vehicle_image or None,
+                # The capture picture (full scene, matching the camera UI);
+                # falls back to the plate cutout if that is all there is.
+                "image_b64": capture_image,
+                "vehicle_image_b64": appearance_image or vehicle_image or None,
                 "plate_image_b64": plate_image or None,
             })
     return results
