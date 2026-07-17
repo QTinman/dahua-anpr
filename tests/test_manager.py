@@ -82,3 +82,63 @@ def test_flush_onvif_keeps_recent():
     pending = {"1": {"data": {"plate": "XYZ"}, "last": 100.0, "emitted": False}}
     assert _flush_onvif(pending, 101.0) == []   # seen recently, keep waiting
     assert "1" in pending
+
+
+def test_store_onvif_pulls_snapshot_when_image_missing():
+    """An ONVIF capture with no embedded picture triggers a live-snapshot
+    fallback so the row is never left image-less (e.g. after a firmware
+    change that stops embedding the snapshot in the metadata)."""
+    import asyncio
+
+    class FakeDB:
+        def __init__(self):
+            self.images = {}
+            self._id = 0
+
+        def add_event(self, anpr):
+            self._id += 1
+            if anpr.image_b64:
+                self.images[self._id] = anpr.image_b64
+            return self._id
+
+        def get_event_image(self, event_id):
+            return self.images.get(event_id)
+
+        def set_event_image(self, event_id, image_b64):
+            self.images[event_id] = image_b64
+
+    class FakeHub:
+        def __init__(self):
+            self.msgs = []
+
+        async def broadcast(self, msg):
+            self.msgs.append(msg)
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def snapshot(self, channel=1):
+            self.calls += 1
+            return b"\xff\xd8jpegbytes"
+
+    async def run():
+        db, hub, client = FakeDB(), FakeHub(), FakeClient()
+        cam = Camera(id=1, name="c", host="h", snapshot_on_event=True)
+        worker = CameraWorker(cam, db=db, hub=hub)
+        worker._onvif_http = client
+        # A record with a plate but no image_b64 (as _flush_onvif emits).
+        await worker._store_onvif(
+            {"plate": "ABC123", "image_b64": None},
+            lambda d: {"plate": d["plate"], "plate_color": "", "country": "",
+                       "vehicle_type": "", "vehicle_color": "", "vehicle_brand": "",
+                       "vehicle_size": "", "plate_type": "", "speed": None,
+                       "lane": None, "direction": "", "event_time": ""})
+        # Let the fallback task run.
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert client.calls == 1
+        assert db.get_event_image(1) is not None
+        assert any(m.get("type") == "event_image" for m in hub.msgs)
+
+    asyncio.run(run())
